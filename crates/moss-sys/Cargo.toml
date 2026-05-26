@@ -1,0 +1,13 @@
+[package]
+name = "moss-sys"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+links = "moss"
+
+[lib]
+name = "moss_sys"
+path = "src/lib.rs"
+
+[build-dependencies]
+bindgen = "0.72"
