@@ -8,9 +8,19 @@ use moss::{
 use output::{OutputOptions, print_sockets, print_summary};
 use std::process::ExitCode;
 
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (commit ",
+    env!("MOSS_BUILD_COMMIT"),
+    ", built ",
+    env!("MOSS_BUILD_TIME"),
+    ")"
+);
+
 #[derive(Debug, Parser)]
 #[command(
     name = "moss",
+    version = VERSION,
     about = "A macOS-native socket statistics tool inspired by Linux ss",
     after_long_help = "\
 EXAMPLES:
