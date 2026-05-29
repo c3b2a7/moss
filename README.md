@@ -23,23 +23,23 @@ It reads socket data through XNU `sysctl` and process metadata through
 
 ## Installation
 
-Install the Rust toolchain and the Xcode command line tools first:
+### Recommended
+
+Install with the script:
 
 ```sh
-xcode-select --install
+curl -fsSL https://get.lolico.me/moss | sh
 ```
 
-Install it into Cargo's bin directory:
+The script installs to `$HOME/.local/bin` by default, choose another directory with `-b`:
 
 ```sh
-cargo install --git https://github.com/c3b2a7/moss.git
+curl -fsSL https://get.lolico.me/moss | sh -s -- -b /usr/local/bin
 ```
 
-After installation:
+### Manual
 
-```sh
-moss --help
-```
+You can download prebuilt binary from [GitHub Releases](https://github.com/c3b2a7/moss/releases).
 
 ## Usage
 

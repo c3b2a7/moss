@@ -107,3 +107,13 @@ jobs:
             --title "$TAG_NAME" \
             --notes-file dist/RELEASE_NOTES.md \
             --verify-tag
+
+  release-install-script:
+    needs: publish
+    uses: c3b2a7/.github/.github/workflows/release-install-script.yaml@main
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      R2_INSTALL_ACCESS_KEY_ID: ${{ secrets.R2_INSTALL_ACCESS_KEY_ID }}
+      R2_INSTALL_SECRET_ACCESS_KEY: ${{ secrets.R2_INSTALL_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
