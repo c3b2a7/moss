@@ -15,8 +15,7 @@ It reads socket data through XNU `sysctl` and process metadata through
 - Optional extended socket metadata and socket memory counters.
 - Service-name lookup by default, numeric ports with `-n`, and reverse hostname
   lookup with `-r`.
-- Resolver caching for service and host lookups, with `--no-resolver-cache` to
-  disable it.
+- Resolver caching for host lookups, with `--no-resolver-cache` to disable it.
 - Summary output for a quick count of TCP, UDP, Unix, established, and listening
   sockets.
 - `ss`-style filter expressions for state, ports, addresses, CIDR ranges, Unix

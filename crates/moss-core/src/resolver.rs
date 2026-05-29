@@ -1,11 +1,14 @@
 use crate::model::Protocol;
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::fs;
 use std::hash::Hash;
 use std::net::IpAddr;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
+const SERVICES_PATH: &str = "/etc/services";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolverConfig {
@@ -26,7 +29,6 @@ impl Default for ResolverConfig {
 pub struct Resolver {
     config: ResolverConfig,
     host_name_cache: HashMap<IpAddr, CacheEntry<Option<String>>>,
-    service_name_cache: HashMap<(u16, Protocol), CacheEntry<Option<String>>>,
 }
 
 impl Resolver {
@@ -34,7 +36,6 @@ impl Resolver {
         Self {
             config,
             host_name_cache: HashMap::new(),
-            service_name_cache: HashMap::new(),
         }
     }
 
@@ -52,16 +53,7 @@ impl Resolver {
     }
 
     pub fn service_name(&mut self, port: u16, protocol: Protocol) -> Option<String> {
-        if !self.config.cache_enabled {
-            return service_name_lookup(port, protocol);
-        }
-
-        cached_lookup(
-            &mut self.service_name_cache,
-            (port, protocol),
-            self.config.cache_ttl,
-            || service_name_lookup(port, protocol),
-        )
+        service_name_lookup(port, protocol)
     }
 }
 
@@ -111,22 +103,76 @@ where
 }
 
 pub fn service_name_lookup(port: u16, protocol: Protocol) -> Option<String> {
-    let proto = match protocol {
-        Protocol::Tcp => c"tcp",
-        Protocol::Udp => c"udp",
-        Protocol::UnixStream | Protocol::UnixDatagram => return None,
+    services().by_port.get(&(port, protocol)).cloned()
+}
+
+pub fn service_port_lookup(name: &str) -> Option<u16> {
+    service_port_lookup_from(services(), name)
+}
+
+fn service_port_lookup_from(services: &ServiceTables, name: &str) -> Option<u16> {
+    [Protocol::Tcp, Protocol::Udp]
+        .into_iter()
+        .find_map(|protocol| services.by_name.get(&(name.to_string(), protocol)).copied())
+}
+
+fn services() -> &'static ServiceTables {
+    static SERVICES: OnceLock<ServiceTables> = OnceLock::new();
+
+    SERVICES.get_or_init(|| parse_services(&fs::read_to_string(SERVICES_PATH).unwrap_or_default()))
+}
+
+#[derive(Debug, Default)]
+struct ServiceTables {
+    by_port: HashMap<(u16, Protocol), String>,
+    by_name: HashMap<(String, Protocol), u16>,
+}
+
+fn parse_services(contents: &str) -> ServiceTables {
+    let mut services = ServiceTables::default();
+
+    for line in contents.lines() {
+        let line = line.split_once('#').map_or(line, |(line, _)| line);
+        let mut fields = line.split_whitespace();
+        let Some(name) = fields.next() else {
+            continue;
+        };
+        let Some(port_protocol) = fields.next() else {
+            continue;
+        };
+        let Some((port, protocol)) = parse_port_protocol(port_protocol) else {
+            continue;
+        };
+
+        services
+            .by_port
+            .entry((port, protocol))
+            .or_insert_with(|| name.to_string());
+        services
+            .by_name
+            .entry((name.to_string(), protocol))
+            .or_insert(port);
+        for alias in fields {
+            services
+                .by_name
+                .entry((alias.to_string(), protocol))
+                .or_insert(port);
+        }
+    }
+
+    services
+}
+
+fn parse_port_protocol(value: &str) -> Option<(u16, Protocol)> {
+    let (port, protocol) = value.split_once('/')?;
+    let port = port.parse().ok()?;
+    let protocol = match protocol {
+        "tcp" => Protocol::Tcp,
+        "udp" => Protocol::Udp,
+        _ => return None,
     };
 
-    if port == 0 {
-        return None;
-    }
-
-    let service = unsafe { libc::getservbyport(port.to_be() as i32, proto.as_ptr()) };
-    if service.is_null() {
-        return None;
-    }
-    let name = unsafe { CStr::from_ptr((*service).s_name) };
-    Some(name.to_string_lossy().into_owned())
+    Some((port, protocol))
 }
 
 pub fn hostname_lookup(address: IpAddr) -> Option<String> {
@@ -187,5 +233,79 @@ pub fn hostname_lookup(address: IpAddr) -> Option<String> {
         )
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_services_by_port_and_protocol() {
+        let services = parse_services(
+            r#"
+http      80/tcp    www www-http # WorldWideWeb HTTP
+domain    53/udp
+domain    53/tcp
+different 1234/udp
+different 4321/tcp
+ignored   9/sctp
+override  80/tcp
+"#,
+        );
+
+        assert_eq!(
+            services.by_port.get(&(80, Protocol::Tcp)),
+            Some(&"http".to_string())
+        );
+        assert_eq!(
+            services.by_port.get(&(53, Protocol::Udp)),
+            Some(&"domain".to_string())
+        );
+        assert_eq!(
+            services.by_port.get(&(53, Protocol::Tcp)),
+            Some(&"domain".to_string())
+        );
+        assert_eq!(
+            services.by_name.get(&("www".to_string(), Protocol::Tcp)),
+            Some(&80)
+        );
+        assert_eq!(
+            services
+                .by_name
+                .get(&("www-http".to_string(), Protocol::Tcp)),
+            Some(&80)
+        );
+        assert_eq!(
+            services
+                .by_name
+                .get(&("override".to_string(), Protocol::Tcp)),
+            Some(&80)
+        );
+        assert_eq!(
+            services
+                .by_name
+                .get(&("different".to_string(), Protocol::Tcp)),
+            Some(&4321)
+        );
+        assert_eq!(
+            services
+                .by_name
+                .get(&("different".to_string(), Protocol::Udp)),
+            Some(&1234)
+        );
+        assert!(!services.by_port.contains_key(&(9, Protocol::Tcp)));
+    }
+
+    #[test]
+    fn resolves_service_ports_with_tcp_preferred() {
+        let services = parse_services(
+            r#"
+different 1234/udp
+different 4321/tcp
+"#,
+        );
+
+        assert_eq!(service_port_lookup_from(&services, "different"), Some(4321));
     }
 }

@@ -1,5 +1,5 @@
 use crate::model::{AddressFamily, Protocol, SocketAddress, SocketInfo, TcpState};
-use std::ffi::CString;
+use crate::resolver::service_port_lookup;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::str::FromStr;
 
@@ -635,21 +635,11 @@ fn parse_port(value: &str) -> Result<u16, String> {
     let value = strip_family_prefix(value)
         .trim_start_matches('=')
         .trim_start_matches(':');
-    value
-        .parse()
-        .or_else(|_| resolve_service_name(value))
-        .map_err(|_| format!("invalid port in filter expression: {value}"))
-}
 
-fn resolve_service_name(value: &str) -> Result<u16, ()> {
-    let name = CString::new(value).map_err(|_| ())?;
-    for proto in [c"tcp", c"udp"] {
-        let service = unsafe { libc::getservbyname(name.as_ptr(), proto.as_ptr()) };
-        if !service.is_null() {
-            return Ok(u16::from_be(unsafe { (*service).s_port as u16 }));
-        }
+    if let Ok(port) = value.parse() {
+        return Ok(port);
     }
-    Err(())
+    service_port_lookup(value).ok_or_else(|| format!("invalid port in filter expression: {value}"))
 }
 
 fn parse_network(value: &str) -> Result<IpNetwork, String> {

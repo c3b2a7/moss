@@ -68,7 +68,7 @@ struct Cli {
     #[arg(short = 'r', long)]
     resolve: bool,
 
-    /// Disable resolver caching for host and service name lookups.
+    /// Disable resolver caching for host lookups.
     #[arg(long)]
     no_resolver_cache: bool,
 
