@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: make fmt
+
+      - name: Run Clippy
+        run: make clippy
+
+  test:
+    name: Test (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-14        # macOS 14, arm64
+          - macos-15        # macOS 15, arm64
+          - macos-15-intel  # macOS 15, x86_64
+          - macos-26        # macOS 26, arm64
+          - macos-26-intel  # macOS 26, x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Show toolchain and SDK
+        run: |
+          rustc -vV
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run unit tests
+        run: make test
+
+  package:
+    name: Package ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            target: aarch64-apple-darwin
+          - runner: macos-26-intel
+            target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release archive
+        run: make dist TARGET=${{ matrix.target }}
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: moss-${{ matrix.target }}.tar.gz
+          path: dist/moss-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  smoke-test:
+    name: Smoke test ${{ matrix.archive }} on ${{ matrix.runner }}
+    needs: package
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14 # macOS 14, arm64
+            archive: moss-aarch64-apple-darwin.tar.gz
+          - runner: macos-15 # macOS 15, arm64
+            archive: moss-aarch64-apple-darwin.tar.gz
+          - runner: macos-15-intel # macOS 15, x86_64
+            archive: moss-x86_64-apple-darwin.tar.gz
+          - runner: macos-26 # macOS 26, arm64
+            archive: moss-aarch64-apple-darwin.tar.gz
+          - runner: macos-26-intel # macOS 26, x86_64
+            archive: moss-x86_64-apple-darwin.tar.gz
+
+    steps:
+      - name: Download archive
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.archive }}
+          path: dist
+
+      - name: Run release binary
+        run: |
+          mkdir -p smoke
+          tar -xzf dist/${{ matrix.archive }} -C smoke
+          smoke/moss --help >/dev/null
+          smoke/moss -t -p -n >/dev/null
+          smoke/moss -u -p -n >/dev/null
+          smoke/moss -x -p -n >/dev/null
+          smoke/moss -s -p -n >/dev/null
+          smoke/moss -e -m -n >/dev/null
