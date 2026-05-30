@@ -11,22 +11,31 @@ use std::ptr;
 
 use moss_sys as ffi;
 
+/// Error returned while collecting socket data from macOS.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A `sysctlbyname` socket query failed.
     #[error("sysctl {name} failed: {source}")]
     Sysctl {
+        /// Name of the sysctl that failed.
         name: &'static str,
+        /// Underlying OS error.
         source: io::Error,
     },
 }
 
 type ProcessIndex = HashMap<(u64, u64), ProcessInfo>;
 
+/// Controls which socket data [`list_sockets`] should collect.
 #[derive(Debug, Clone, Copy)]
 pub struct SocketQuery {
+    /// Include process name, pid, and file descriptor metadata when available.
     pub include_processes: bool,
+    /// Include TCP sockets.
     pub include_tcp: bool,
+    /// Include UDP sockets.
     pub include_udp: bool,
+    /// Include Unix-domain sockets.
     pub include_unix: bool,
 }
 
@@ -41,6 +50,12 @@ impl Default for SocketQuery {
     }
 }
 
+/// Lists macOS sockets matching the requested protocol groups.
+///
+/// By default, [`SocketQuery`] collects TCP and UDP sockets without process
+/// metadata. Unix-domain sockets and process metadata require walking process
+/// file descriptors through `libproc`, so those options can be slower and may
+/// omit data hidden by macOS permissions.
 pub fn list_sockets(query: SocketQuery) -> Result<Vec<SocketInfo>, Error> {
     let processes = if query.include_processes {
         process_index()

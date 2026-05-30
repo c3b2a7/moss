@@ -3,12 +3,17 @@ use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
 
+/// Socket transport protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
+    /// TCP over IPv4 or IPv6.
     Tcp,
+    /// UDP over IPv4 or IPv6.
     Udp,
+    /// Unix-domain stream socket.
     UnixStream,
+    /// Unix-domain datagram socket.
     UnixDatagram,
 }
 
@@ -24,26 +29,35 @@ impl fmt::Display for Protocol {
 }
 
 impl Protocol {
+    /// Returns true for Unix-domain socket protocols.
     pub fn is_unix(self) -> bool {
         matches!(self, Self::UnixStream | Self::UnixDatagram)
     }
 }
 
+/// Address family used by a socket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AddressFamily {
+    /// IPv4 socket.
     Ipv4,
+    /// IPv6 socket.
     Ipv6,
+    /// Unix-domain socket.
     Unix,
 }
 
+/// IP endpoint with an address and port.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Endpoint {
+    /// IP address bound to the endpoint.
     pub address: IpAddr,
+    /// TCP or UDP port in host byte order.
     pub port: u16,
 }
 
 impl Endpoint {
+    /// Returns true when the address is the wildcard/unspecified address.
     pub fn is_wildcard(&self) -> bool {
         self.address.is_unspecified()
     }
@@ -58,14 +72,18 @@ impl fmt::Display for Endpoint {
     }
 }
 
+/// Socket endpoint address.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum SocketAddress {
+    /// IPv4 or IPv6 address with a port.
     Inet(Endpoint),
+    /// Unix-domain socket path. `"*"` represents an unnamed or wildcard path.
     Unix { path: String },
 }
 
 impl SocketAddress {
+    /// Returns true for wildcard IP endpoints or unnamed Unix paths.
     pub fn is_wildcard(&self) -> bool {
         match self {
             Self::Inet(endpoint) => endpoint.is_wildcard(),
@@ -73,6 +91,7 @@ impl SocketAddress {
         }
     }
 
+    /// Returns the port for IP sockets.
     pub fn port(&self) -> Option<u16> {
         match self {
             Self::Inet(endpoint) => Some(endpoint.port),
@@ -80,6 +99,7 @@ impl SocketAddress {
         }
     }
 
+    /// Returns the IP address for IP sockets.
     pub fn ip(&self) -> Option<IpAddr> {
         match self {
             Self::Inet(endpoint) => Some(endpoint.address),
@@ -98,24 +118,38 @@ impl fmt::Display for SocketAddress {
     }
 }
 
+/// TCP connection state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TcpState {
+    /// Socket is closed.
     Closed,
+    /// Socket is listening for incoming connections.
     Listen,
+    /// SYN has been sent.
     SynSent,
+    /// SYN has been received.
     SynReceived,
+    /// Connection is established.
     Established,
+    /// Remote side has closed.
     CloseWait,
+    /// First FIN wait state.
     FinWait1,
+    /// Both sides are closing.
     Closing,
+    /// Waiting for final ACK.
     LastAck,
+    /// Second FIN wait state.
     FinWait2,
+    /// Connection is in TIME-WAIT.
     TimeWait,
+    /// A raw platform state value not known by this crate.
     Unknown(i32),
 }
 
 impl TcpState {
+    /// Known TCP states, excluding [`TcpState::Unknown`].
     pub const KNOWN: &'static [Self] = &[
         Self::Closed,
         Self::Listen,
@@ -130,10 +164,12 @@ impl TcpState {
         Self::TimeWait,
     ];
 
+    /// Returns true for the listening state.
     pub fn is_listening(self) -> bool {
         matches!(self, Self::Listen)
     }
 
+    /// Returns true for states representing an active or closing connection.
     pub fn is_connected(self) -> bool {
         matches!(
             self,
@@ -149,14 +185,17 @@ impl TcpState {
         )
     }
 
+    /// Returns true for connected states except `SYN-SENT`.
     pub fn is_synchronized(self) -> bool {
         self.is_connected() && !matches!(self, Self::SynSent)
     }
 
+    /// Returns true for the `ss` bucket state set.
     pub fn is_bucket(self) -> bool {
         matches!(self, Self::TimeWait | Self::SynReceived)
     }
 
+    /// Returns true for the `ss` big state set.
     pub fn is_big(self) -> bool {
         !self.is_bucket()
     }
@@ -221,10 +260,14 @@ impl fmt::Display for TcpState {
     }
 }
 
+/// Process metadata associated with a socket, when available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProcessInfo {
+    /// Process identifier.
     pub pid: i32,
+    /// File descriptor number inside the process.
     pub fd: i32,
+    /// Process name reported by macOS.
     pub name: String,
 }
 
@@ -234,30 +277,52 @@ impl fmt::Display for ProcessInfo {
     }
 }
 
+/// Socket buffer memory counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SocketMemory {
+    /// Receive queue bytes currently used.
     pub recv_bytes: u32,
+    /// Receive buffer high-water mark.
     pub recv_high_water: u32,
+    /// Receive mbuf bytes currently used.
     pub recv_mbuf_bytes: u32,
+    /// Receive mbuf byte limit.
     pub recv_mbuf_limit: u32,
+    /// Send queue bytes currently used.
     pub send_bytes: u32,
+    /// Send buffer high-water mark.
     pub send_high_water: u32,
+    /// Send mbuf bytes currently used.
     pub send_mbuf_bytes: u32,
+    /// Send mbuf byte limit.
     pub send_mbuf_limit: u32,
 }
 
+/// A socket record returned by [`crate::list_sockets`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SocketInfo {
+    /// Socket protocol.
     pub protocol: Protocol,
+    /// Socket address family.
     pub family: AddressFamily,
+    /// TCP state, or `None` for UDP and Unix-domain sockets.
     pub state: Option<TcpState>,
+    /// Receive queue byte count.
     pub recv_queue: u32,
+    /// Send queue byte count.
     pub send_queue: u32,
+    /// Local endpoint.
     pub local: SocketAddress,
+    /// Peer endpoint.
     pub peer: SocketAddress,
+    /// Socket owner user id when reported by the platform.
     pub uid: u32,
+    /// Kernel socket pointer value, useful for correlation and debugging.
     pub socket_handle: u64,
+    /// Kernel protocol control block pointer value, useful for correlation.
     pub pcb_handle: u64,
+    /// Socket memory counters.
     pub memory: SocketMemory,
+    /// Process metadata when requested and available.
     pub process: Option<ProcessInfo>,
 }

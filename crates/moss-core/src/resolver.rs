@@ -10,9 +10,12 @@ use std::time::{Duration, Instant};
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
 const SERVICES_PATH: &str = "/etc/services";
 
+/// Name resolver configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolverConfig {
+    /// Enables the per-resolver host-name cache.
     pub cache_enabled: bool,
+    /// Time-to-live for cached host-name lookup results.
     pub cache_ttl: Duration,
 }
 
@@ -25,6 +28,10 @@ impl Default for ResolverConfig {
     }
 }
 
+/// Resolver for host names and service names.
+///
+/// Host-name lookups use `getnameinfo` and can be cached per resolver.
+/// Service-name lookups read `/etc/services` into a process-wide table.
 #[derive(Debug)]
 pub struct Resolver {
     config: ResolverConfig,
@@ -32,6 +39,7 @@ pub struct Resolver {
 }
 
 impl Resolver {
+    /// Creates a resolver with the provided configuration.
     pub fn new(config: ResolverConfig) -> Self {
         Self {
             config,
@@ -39,6 +47,14 @@ impl Resolver {
         }
     }
 
+    /// Returns the active resolver configuration.
+    pub fn config(&self) -> ResolverConfig {
+        self.config
+    }
+
+    /// Looks up a host name for an IP address.
+    ///
+    /// Returns `None` when reverse lookup fails or the address has no name.
     pub fn host_name(&mut self, address: IpAddr) -> Option<String> {
         if !self.config.cache_enabled {
             return hostname_lookup(address);
@@ -52,8 +68,14 @@ impl Resolver {
         )
     }
 
+    /// Looks up a service name for a port and protocol.
     pub fn service_name(&mut self, port: u16, protocol: Protocol) -> Option<String> {
         service_name_lookup(port, protocol)
+    }
+
+    /// Clears cached host-name lookup results.
+    pub fn clear_cache(&mut self) {
+        self.host_name_cache.clear();
     }
 }
 
@@ -102,10 +124,12 @@ where
     value
 }
 
+/// Looks up the canonical service name for a port and protocol.
 pub fn service_name_lookup(port: u16, protocol: Protocol) -> Option<String> {
     services().by_port.get(&(port, protocol)).cloned()
 }
 
+/// Looks up a TCP or UDP service port by service name.
 pub fn service_port_lookup(name: &str) -> Option<u16> {
     service_port_lookup_from(services(), name)
 }
@@ -175,6 +199,7 @@ fn parse_port_protocol(value: &str) -> Option<(u16, Protocol)> {
     Some((port, protocol))
 }
 
+/// Performs an uncached reverse host-name lookup.
 pub fn hostname_lookup(address: IpAddr) -> Option<String> {
     let mut host = [0i8; libc::NI_MAXHOST as usize];
     let rc = match address {
@@ -307,5 +332,18 @@ different 4321/tcp
         );
 
         assert_eq!(service_port_lookup_from(&services, "different"), Some(4321));
+    }
+
+    #[test]
+    fn exposes_resolver_configuration_and_cache_controls() {
+        let config = ResolverConfig {
+            cache_enabled: false,
+            cache_ttl: Duration::from_secs(42),
+        };
+        let mut resolver = Resolver::new(config);
+
+        assert_eq!(resolver.config(), config);
+        resolver.clear_cache();
+        assert_eq!(resolver.config(), config);
     }
 }

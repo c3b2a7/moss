@@ -3,63 +3,96 @@ use crate::resolver::service_port_lookup;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::str::FromStr;
 
+/// Socket filter settings used by the CLI and library callers.
 #[derive(Debug, Clone, Default)]
 pub struct SocketFilter {
+    /// Protocols to include. An empty list means no protocol restriction.
     pub protocols: Vec<Protocol>,
+    /// Address family to include.
     pub family: Option<AddressFamily>,
+    /// When true, keep listening TCP sockets and unconnected UDP sockets.
     pub listening: bool,
+    /// When true, do not apply the listening-only state filter.
     pub all: bool,
+    /// Optional parsed `ss`-style expression.
     pub expression: Option<FilterExpression>,
 }
 
+/// Parsed `ss`-style filter expression.
+///
+/// Use [`FilterExpression::parse`] when accepting expression text from users.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterExpression {
+    /// A single predicate.
     Predicate(Predicate),
+    /// Logical AND.
     And(Box<FilterExpression>, Box<FilterExpression>),
+    /// Logical OR.
     Or(Box<FilterExpression>, Box<FilterExpression>),
+    /// Logical NOT.
     Not(Box<FilterExpression>),
 }
 
+/// Primitive predicate inside a [`FilterExpression`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Predicate {
+    /// Match one of the TCP states.
     State(Vec<TcpState>),
+    /// Match a local, peer, or either endpoint port.
     Port {
+        /// Endpoint side to inspect.
         side: EndpointSide,
+        /// Comparison operator.
         op: CompareOp,
+        /// Port to compare against.
         port: u16,
     },
+    /// Match a local, peer, or either endpoint address.
     Address {
+        /// Endpoint side to inspect.
         side: EndpointSide,
+        /// IP address matcher.
         matcher: AddressMatcher,
     },
+    /// Match a Unix-domain socket path with a case-insensitive glob.
     UnixPath(PathMatcher),
 }
 
+/// Endpoint side used by port and address predicates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndpointSide {
+    /// Local/source endpoint.
     Local,
+    /// Peer/destination endpoint.
     Peer,
+    /// Either endpoint.
     Any,
 }
 
+/// IP network matcher parsed from CIDR expression syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IpNetwork {
     address: IpAddr,
     prefix_len: u8,
 }
 
+/// IP address matcher used by address predicates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressMatcher {
+    /// Match one exact IP address.
     Exact(IpAddr),
+    /// Match an IP network.
     Network(IpNetwork),
 }
 
+/// Unix-domain socket path matcher parsed from expression syntax.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathMatcher {
     pattern: String,
 }
 
 impl SocketFilter {
+    /// Returns true when the socket satisfies this filter.
     pub fn matches(&self, socket: &SocketInfo) -> bool {
         if !self.protocols.is_empty() && !self.protocols.contains(&socket.protocol) {
             return false;
@@ -93,6 +126,12 @@ impl SocketFilter {
 }
 
 impl FilterExpression {
+    /// Parses command-line expression tokens into a filter expression.
+    ///
+    /// Tokens are normally the trailing arguments captured by the CLI. Empty
+    /// input returns `Ok(None)`. The parser accepts common Linux `ss`
+    /// expression forms including state sets, port predicates, address/CIDR
+    /// predicates, Unix path globs, boolean operators, and grouping.
     pub fn parse(tokens: &[String]) -> Result<Option<Self>, String> {
         if tokens.is_empty() {
             return Ok(None);
@@ -100,7 +139,8 @@ impl FilterExpression {
         Parser::new(tokens)?.parse().map(Some)
     }
 
-    fn matches(&self, socket: &SocketInfo) -> bool {
+    /// Returns true when the expression matches a socket.
+    pub fn matches(&self, socket: &SocketInfo) -> bool {
         match self {
             Self::Predicate(predicate) => predicate.matches(socket),
             Self::And(left, right) => left.matches(socket) && right.matches(socket),
@@ -111,7 +151,8 @@ impl FilterExpression {
 }
 
 impl Predicate {
-    fn matches(&self, socket: &SocketInfo) -> bool {
+    /// Returns true when the predicate matches a socket.
+    pub fn matches(&self, socket: &SocketInfo) -> bool {
         match self {
             Self::State(states) => socket.state.is_some_and(|state| states.contains(&state)),
             Self::Port { side, op, port } => port_matches(socket, *side, *op, *port),
@@ -124,7 +165,8 @@ impl Predicate {
 }
 
 impl AddressMatcher {
-    fn matches(self, address: IpAddr) -> bool {
+    /// Returns true when the matcher accepts an IP address.
+    pub fn matches(self, address: IpAddr) -> bool {
         match self {
             Self::Exact(expected) => address == expected,
             Self::Network(network) => network.contains(address),
@@ -133,13 +175,20 @@ impl AddressMatcher {
 }
 
 impl PathMatcher {
-    fn new(pattern: impl Into<String>) -> Self {
+    /// Creates a case-insensitive Unix socket path glob matcher.
+    pub fn new(pattern: impl Into<String>) -> Self {
         Self {
             pattern: pattern.into(),
         }
     }
 
-    fn matches(&self, address: &SocketAddress) -> bool {
+    /// Returns the original glob pattern.
+    pub fn pattern(&self) -> &str {
+        &self.pattern
+    }
+
+    /// Returns true when the matcher accepts a Unix socket address.
+    pub fn matches(&self, address: &SocketAddress) -> bool {
         let SocketAddress::Unix { path } = address else {
             return false;
         };
@@ -151,7 +200,8 @@ impl PathMatcher {
 }
 
 impl IpNetwork {
-    fn new(address: IpAddr, prefix_len: u8) -> Result<Self, String> {
+    /// Creates an IP network from an address and prefix length.
+    pub fn new(address: IpAddr, prefix_len: u8) -> Result<Self, String> {
         let max_prefix = match address {
             IpAddr::V4(_) => 32,
             IpAddr::V6(_) => 128,
@@ -165,7 +215,18 @@ impl IpNetwork {
         })
     }
 
-    fn contains(self, address: IpAddr) -> bool {
+    /// Returns the network base address.
+    pub fn address(self) -> IpAddr {
+        self.address
+    }
+
+    /// Returns the CIDR prefix length.
+    pub fn prefix_len(self) -> u8 {
+        self.prefix_len
+    }
+
+    /// Returns true when the network contains an IP address.
+    pub fn contains(self, address: IpAddr) -> bool {
         match (self.address, address) {
             (IpAddr::V4(network), IpAddr::V4(address)) => {
                 prefix_matches(u32::from(network), u32::from(address), self.prefix_len)
@@ -211,13 +272,20 @@ enum Token {
     Word(String),
 }
 
+/// Port comparison operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompareOp {
+    /// Equal.
     Eq,
+    /// Not equal.
     Ne,
+    /// Less than.
     Lt,
+    /// Less than or equal.
     Le,
+    /// Greater than.
     Gt,
+    /// Greater than or equal.
     Ge,
 }
 
@@ -757,6 +825,7 @@ fn strip_family_prefix(value: &str) -> &str {
         .map_or(value, |(_, rest)| rest)
 }
 
+/// Returns sockets that match the supplied filter.
 pub fn filter_sockets(sockets: Vec<SocketInfo>, filter: &SocketFilter) -> Vec<SocketInfo> {
     sockets
         .into_iter()
@@ -931,6 +1000,33 @@ mod tests {
             50_000
         )));
         assert!(!expression.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 443, 0)));
+    }
+
+    #[test]
+    fn exposes_public_filter_building_blocks() {
+        let network = IpNetwork::new(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 0)), 16).unwrap();
+        assert_eq!(network.address(), IpAddr::V4(Ipv4Addr::new(192, 168, 0, 0)));
+        assert_eq!(network.prefix_len(), 16);
+        assert!(network.contains(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10))));
+
+        let matcher = PathMatcher::new("/tmp/*.sock");
+        assert_eq!(matcher.pattern(), "/tmp/*.sock");
+        assert!(matcher.matches(&SocketAddress::Unix {
+            path: "/tmp/test.sock".to_string(),
+        }));
+
+        let predicate = Predicate::Address {
+            side: EndpointSide::Local,
+            matcher: AddressMatcher::Network(network),
+        };
+        assert!(predicate.matches(&socket_with_addrs(
+            Protocol::Tcp,
+            Some(TcpState::Listen),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)),
+            443,
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            0,
+        )));
     }
 
     #[test]
