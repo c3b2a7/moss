@@ -1,4 +1,4 @@
-use moss::{Protocol, Resolver, ResolverConfig, SocketAddress, SocketInfo, TcpState};
+use moss_core::{Protocol, Resolver, ResolverConfig, SocketAddress, SocketInfo, TcpState};
 use owo_colors::OwoColorize;
 use std::net::IpAddr;
 

@@ -8,20 +8,20 @@
 //! List sockets with process information:
 //!
 //! ```no_run
-//! use moss::{SocketQuery, list_sockets};
+//! use moss_core::{SocketQuery, list_sockets};
 //!
 //! let query = SocketQuery {
 //!     include_processes: true,
 //!     ..SocketQuery::default()
 //! };
 //! let sockets = list_sockets(query)?;
-//! # Ok::<(), moss::Error>(())
+//! # Ok::<(), moss_core::Error>(())
 //! ```
 //!
 //! Parse an `ss`-style destination-port filter:
 //!
 //! ```no_run
-//! use moss::{FilterExpression, SocketFilter, SocketQuery, filter_sockets, list_sockets};
+//! use moss_core::{FilterExpression, SocketFilter, SocketQuery, filter_sockets, list_sockets};
 //!
 //! let expression = FilterExpression::parse(&["dport = :443".to_string()])?;
 //! let filter = SocketFilter {
@@ -37,7 +37,7 @@
 //! Build a filter expression programmatically:
 //!
 //! ```no_run
-//! use moss::{CompareOp, EndpointSide, FilterExpression, Predicate};
+//! use moss_core::{CompareOp, EndpointSide, FilterExpression, Predicate};
 //!
 //! let expression = FilterExpression::Predicate(Predicate::Port {
 //!     side: EndpointSide::Peer,

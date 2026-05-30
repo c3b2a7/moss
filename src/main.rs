@@ -1,7 +1,7 @@
 mod output;
 
 use clap::Parser;
-use moss::{
+use moss_core::{
     AddressFamily, FilterExpression, Protocol, SocketFilter, SocketQuery, filter_sockets,
     list_sockets,
 };
