@@ -53,6 +53,8 @@
 //! - [`filter`] parses and applies `ss`-style filter expressions.
 //! - [`resolver`] resolves host names and service names.
 
+#![cfg_attr(docsrs, doc(cfg(target_os = "macos")))]
+
 pub mod filter;
 pub mod model;
 pub mod platform;

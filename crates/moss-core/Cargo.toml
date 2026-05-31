@@ -2,6 +2,19 @@
 name = "moss-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Reusable macOS socket inspection library that powers moss"
+documentation = "https://docs.rs/moss-core"
+readme = "README.md"
+keywords = ["macos", "socket", "network", "darwin", "libproc"]
+categories = ["network-programming", "os::macos-apis"]
+
+[package.metadata.docsrs]
+features = ["doc-cfg"]
+default-target = "aarch64-apple-darwin"
 
 [lib]
 name = "moss_core"
@@ -9,7 +22,7 @@ path = "src/lib.rs"
 
 [dependencies]
 libc = "0.2"
-moss-sys = { path = "../moss-sys" }
+moss-sys = { version = "0.1.0", path = "../moss-sys" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
 

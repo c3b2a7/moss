@@ -4,16 +4,29 @@ members = [".", "crates/moss-core", "crates/moss-sys"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/c3b2a7/moss"
+homepage = "https://github.com/c3b2a7/moss"
+rust-version = "1.85"
 
 [package]
 name = "moss"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "A macOS-native socket statistics CLI inspired by Linux ss"
+documentation = "https://docs.rs/moss"
+readme = "README.md"
+keywords = ["macos", "socket", "network", "ss", "cli"]
+categories = ["command-line-utilities", "network-programming", "os::macos-apis"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 owo-colors = "4.2"
-moss-core = { path = "crates/moss-core" }
+moss-core = { version = "0.1.0", path = "crates/moss-core" }
 serde_json = "1.0"
 
 [build-dependencies]

@@ -4,6 +4,19 @@ version.workspace = true
 edition.workspace = true
 build = "build.rs"
 links = "moss"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Raw Darwin FFI bindings for moss and other macOS socket tools"
+documentation = "https://docs.rs/moss-sys"
+readme = "README.md"
+keywords = ["macos", "darwin", "ffi", "sysctl", "libproc"]
+categories = ["external-ffi-bindings", "os::macos-apis"]
+
+[package.metadata.docs.rs]
+features = ["doc-cfg"]
+default-target = "aarch64-apple-darwin"
 
 [lib]
 name = "moss_sys"

@@ -7,5 +7,9 @@
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)]
+#![cfg_attr(docsrs, doc(cfg(target_os = "macos")))]
+
+#[cfg(not(target_os = "macos"))]
+compile_error!("moss-sys only supports macOS targets");
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
