@@ -64,7 +64,7 @@ pub use filter::{
 };
 pub use model::{
     AddressFamily, Endpoint, ProcessInfo, Protocol, SocketAddress, SocketInfo, SocketMemory,
-    TcpState,
+    SocketState, TcpState,
 };
 pub use platform::{Error, SocketQuery, list_sockets};
 pub use resolver::{

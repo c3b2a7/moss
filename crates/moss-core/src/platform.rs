@@ -1,6 +1,6 @@
 use crate::model::{
     AddressFamily, Endpoint, ProcessInfo, Protocol, SocketAddress, SocketInfo, SocketMemory,
-    TcpState,
+    SocketState, TcpState,
 };
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -10,6 +10,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ptr;
 
 use moss_sys as ffi;
+
+const SOI_S_ISCONNECTED: i16 = 0x0002;
 
 /// Error returned while collecting socket data from macOS.
 #[derive(Debug, thiserror::Error)]
@@ -142,7 +144,7 @@ fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo
     Some(SocketInfo {
         protocol: Protocol::Tcp,
         family,
-        state: Some(TcpState::from(raw.t_state)),
+        state: SocketState::Tcp(TcpState::from(raw.t_state)),
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
         local: SocketAddress::Inet(local),
@@ -158,15 +160,17 @@ fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo
 fn udp_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
     let family = family_from_flags(pcb.inp_vflag)?;
     let socket = pcb.xi_socket;
+    let local = endpoint(&pcb, family, true);
+    let peer = endpoint(&pcb, family, false);
 
     Some(SocketInfo {
         protocol: Protocol::Udp,
         family,
-        state: None,
+        state: udp_state(peer.clone()),
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
-        local: SocketAddress::Inet(endpoint(&pcb, family, true)),
-        peer: SocketAddress::Inet(endpoint(&pcb, family, false)),
+        local: SocketAddress::Inet(local),
+        peer: SocketAddress::Inet(peer),
         uid: socket.so_uid,
         socket_handle: socket.xso_so,
         pcb_handle: socket.so_pcb,
@@ -208,11 +212,12 @@ fn unix_socket(
     let unix = unsafe { info.psi.soi_proto.pri_un };
     let local = unix_path(unsafe { unix.unsi_addr.ua_sun });
     let peer = unix_path(unsafe { unix.unsi_caddr.ua_sun });
+    let state = unix_state(info.psi.soi_qlimit, info.psi.soi_state, unix, &peer);
 
     Some(SocketInfo {
         protocol,
         family: AddressFamily::Unix,
-        state: None,
+        state,
         recv_queue: info.psi.soi_rcv.sbi_cc,
         send_queue: info.psi.soi_snd.sbi_cc,
         local: SocketAddress::Unix { path: local },
@@ -240,6 +245,30 @@ fn unix_path(addr: ffi::sockaddr_un) -> String {
     }
     let bytes: Vec<u8> = addr.sun_path[..len].iter().map(|ch| *ch as u8).collect();
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn udp_state(peer: Endpoint) -> SocketState {
+    if peer.is_wildcard() && peer.port == 0 {
+        SocketState::Unconnected
+    } else {
+        SocketState::Connected
+    }
+}
+
+fn unix_state(qlimit: i16, state_bits: i16, unix: ffi::un_sockinfo, peer: &str) -> SocketState {
+    if qlimit > 0 {
+        return SocketState::Listening;
+    }
+
+    if state_bits & SOI_S_ISCONNECTED != 0
+        || unix.unsi_conn_so != 0
+        || unix.unsi_conn_pcb != 0
+        || peer != "*"
+    {
+        SocketState::Connected
+    } else {
+        SocketState::Unconnected
+    }
 }
 
 fn memory_from_xsocket(socket: ffi::xsocket64) -> SocketMemory {

@@ -260,6 +260,49 @@ impl fmt::Display for TcpState {
     }
 }
 
+/// Socket state across supported protocols.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "tcp_state", rename_all = "kebab-case")]
+pub enum SocketState {
+    /// TCP socket state.
+    Tcp(TcpState),
+    /// Listening socket state for non-TCP protocols.
+    Listening,
+    /// Connected socket state for non-TCP protocols.
+    Connected,
+    /// Unconnected socket state for non-TCP protocols.
+    Unconnected,
+    /// State could not be derived.
+    Unknown,
+}
+
+impl SocketState {
+    /// Returns the underlying TCP state when available.
+    pub fn tcp_state(self) -> Option<TcpState> {
+        match self {
+            Self::Tcp(state) => Some(state),
+            Self::Listening | Self::Connected | Self::Unconnected | Self::Unknown => None,
+        }
+    }
+
+    /// Returns true for listening sockets.
+    pub fn is_listening(self) -> bool {
+        matches!(self, Self::Tcp(state) if state.is_listening()) || matches!(self, Self::Listening)
+    }
+}
+
+impl fmt::Display for SocketState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tcp(state) => state.fmt(f),
+            Self::Listening => f.write_str("LISTEN"),
+            Self::Connected => f.write_str("CONNECTED"),
+            Self::Unconnected => f.write_str("UNCONN"),
+            Self::Unknown => f.write_str("UNKNOWN"),
+        }
+    }
+}
+
 /// Process metadata associated with a socket, when available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProcessInfo {
@@ -305,8 +348,8 @@ pub struct SocketInfo {
     pub protocol: Protocol,
     /// Socket address family.
     pub family: AddressFamily,
-    /// TCP state, or `None` for UDP and Unix-domain sockets.
-    pub state: Option<TcpState>,
+    /// Protocol-specific socket state.
+    pub state: SocketState,
     /// Receive queue byte count.
     pub recv_queue: u32,
     /// Send queue byte count.

@@ -1,4 +1,4 @@
-use moss_core::{Protocol, Resolver, ResolverConfig, SocketAddress, SocketInfo, TcpState};
+use moss_core::{Protocol, Resolver, ResolverConfig, SocketAddress, SocketInfo, SocketState, TcpState};
 use owo_colors::OwoColorize;
 use std::net::IpAddr;
 
@@ -174,8 +174,8 @@ impl SocketSummary {
                 Protocol::Tcp => {
                     summary.tcp += 1;
                     match socket.state {
-                        Some(TcpState::Established) => summary.established += 1,
-                        Some(state) if state.is_listening() => summary.listening += 1,
+                        SocketState::Tcp(TcpState::Established) => summary.established += 1,
+                        state if state.is_listening() => summary.listening += 1,
                         _ => {}
                     }
                 }
@@ -189,10 +189,7 @@ impl SocketSummary {
 }
 
 fn state_text(socket: &SocketInfo) -> String {
-    socket
-        .state
-        .map(|state| state.to_string())
-        .unwrap_or_else(|| "UNCONN".to_string())
+    socket.state.to_string()
 }
 
 fn color_state(state: &str) -> String {
