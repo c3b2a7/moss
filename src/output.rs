@@ -1,4 +1,6 @@
-use moss_core::{Protocol, Resolver, ResolverConfig, SocketAddress, SocketInfo, SocketState, TcpState};
+use moss_core::{
+    Protocol, Resolver, ResolverConfig, SocketAddress, SocketInfo, SocketState, TcpState,
+};
 use owo_colors::OwoColorize;
 use std::net::IpAddr;
 
@@ -16,7 +18,7 @@ pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) {
     let rows: Vec<SocketRow> = sockets
         .iter()
         .map(|socket| SocketRow {
-            netid: socket.protocol.to_string(),
+            netid: netid_text(socket),
             state: state_text(socket),
             recv_queue: socket.recv_queue.to_string(),
             send_queue: socket.send_queue.to_string(),
@@ -64,6 +66,7 @@ pub fn print_summary(sockets: &[SocketInfo]) {
         summary.tcp, summary.established, summary.listening
     );
     println!("UDP:   {}", summary.udp);
+    println!("RAW:   {}", summary.raw);
     println!("UNIX:  {}", summary.unix);
 }
 
@@ -160,6 +163,7 @@ impl SocketWidths {
 struct SocketSummary {
     tcp: usize,
     udp: usize,
+    raw: usize,
     unix: usize,
     established: usize,
     listening: usize,
@@ -180,6 +184,7 @@ impl SocketSummary {
                     }
                 }
                 Protocol::Udp => summary.udp += 1,
+                Protocol::Raw => summary.raw += 1,
                 Protocol::UnixStream | Protocol::UnixDatagram => summary.unix += 1,
             }
         }
@@ -190,6 +195,13 @@ impl SocketSummary {
 
 fn state_text(socket: &SocketInfo) -> String {
     socket.state.to_string()
+}
+
+fn netid_text(socket: &SocketInfo) -> String {
+    match (socket.protocol, socket.family) {
+        (Protocol::Raw, moss_core::AddressFamily::Ipv6) => "raw6".to_string(),
+        _ => socket.protocol.to_string(),
+    }
 }
 
 fn color_state(state: &str) -> String {
@@ -231,6 +243,9 @@ impl<'a> AddressFormatter<'a> {
                 } else {
                     endpoint.address.to_string()
                 };
+                if protocol == Protocol::Raw {
+                    return host;
+                }
                 let port = if self.options.numeric {
                     endpoint.port.to_string()
                 } else {

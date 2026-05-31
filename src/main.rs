@@ -27,6 +27,7 @@ EXAMPLES:
   moss                                Show TCP and UDP sockets
   moss -t -l                          Show listening TCP sockets
   moss -u                             Show UDP sockets
+  moss -w                             Show raw sockets
   moss -x                             Show Unix domain sockets
   moss -t -p                          Show TCP sockets with process info
   moss -t -a -p -m                    Show all TCP sockets with memory info
@@ -49,6 +50,10 @@ struct Cli {
     /// Show Unix domain sockets.
     #[arg(short = 'x', long)]
     unix: bool,
+
+    /// Show raw sockets.
+    #[arg(short = 'w', long)]
+    raw: bool,
 
     /// Show listening sockets.
     #[arg(short = 'l', long)]
@@ -175,6 +180,7 @@ fn main() -> ExitCode {
         include_processes: cli.processes,
         include_tcp: query_includes_protocol(&cli, Protocol::Tcp),
         include_udp: query_includes_protocol(&cli, Protocol::Udp),
+        include_raw: query_includes_protocol(&cli, Protocol::Raw),
         include_unix: !matches!(family, Some(AddressFamily::Ipv4 | AddressFamily::Ipv6))
             && (cli.summary
                 || query_includes_protocol(&cli, Protocol::UnixStream)
@@ -206,6 +212,9 @@ fn protocols(cli: &Cli) -> Vec<Protocol> {
     if cli.unix {
         protocols.extend([Protocol::UnixStream, Protocol::UnixDatagram]);
     }
+    if cli.raw {
+        protocols.push(Protocol::Raw);
+    }
     if cli.tcp {
         protocols.push(Protocol::Tcp)
     }
@@ -216,7 +225,7 @@ fn protocols(cli: &Cli) -> Vec<Protocol> {
 }
 
 fn query_includes_protocol(cli: &Cli, protocol: Protocol) -> bool {
-    let no_protocol_filter = !cli.tcp && !cli.udp && !cli.unix;
+    let no_protocol_filter = !cli.tcp && !cli.udp && !cli.unix && !cli.raw;
     if no_protocol_filter {
         return matches!(protocol, Protocol::Tcp | Protocol::Udp);
     }
@@ -224,12 +233,13 @@ fn query_includes_protocol(cli: &Cli, protocol: Protocol) -> bool {
     match protocol {
         Protocol::Tcp => cli.tcp,
         Protocol::Udp => cli.udp,
+        Protocol::Raw => cli.raw,
         Protocol::UnixStream | Protocol::UnixDatagram => cli.unix,
     }
 }
 
 fn family(cli: &Cli) -> Option<AddressFamily> {
-    if cli.unix && !cli.tcp && !cli.udp {
+    if cli.unix && !cli.tcp && !cli.udp && !cli.raw {
         return Some(AddressFamily::Unix);
     }
 

@@ -875,6 +875,7 @@ mod tests {
             state,
             recv_queue: 0,
             send_queue: 0,
+            ip_protocol: (protocol == Protocol::Raw).then_some(1),
             local: SocketAddress::Inet(Endpoint {
                 address: local_address,
                 port: local_port,
@@ -911,6 +912,7 @@ mod tests {
             state: SocketState::Unconnected,
             recv_queue: 0,
             send_queue: 0,
+            ip_protocol: None,
             local: SocketAddress::Unix {
                 path: local.to_string(),
             },
@@ -980,12 +982,7 @@ mod tests {
             22,
             0
         )));
-        assert!(filter.matches(&socket(
-            Protocol::Udp,
-            SocketState::Unconnected,
-            53,
-            0
-        )));
+        assert!(filter.matches(&socket(Protocol::Udp, SocketState::Unconnected, 53, 0)));
         assert!(!filter.matches(&socket(
             Protocol::Tcp,
             SocketState::Tcp(TcpState::Established),
@@ -1246,13 +1243,34 @@ mod tests {
     fn tcp_state_predicates_ignore_non_tcp_states() {
         let expression = parse("state connected");
 
-        assert!(!expression.matches(&socket(
+        assert!(!expression.matches(&socket(Protocol::Udp, SocketState::Connected, 53, 5353)));
+        assert!(!expression.matches(&unix_socket("/tmp/a.sock", "/tmp/b.sock")));
+    }
+
+    #[test]
+    fn protocol_and_address_filters_match_raw_sockets() {
+        let filter = SocketFilter {
+            protocols: vec![Protocol::Raw],
+            expression: Some(parse("dst 203.0.113.10")),
+            ..SocketFilter::default()
+        };
+
+        assert!(filter.matches(&socket_with_addrs(
+            Protocol::Raw,
+            SocketState::Connected,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            0,
+            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
+            0,
+        )));
+        assert!(!filter.matches(&socket_with_addrs(
             Protocol::Udp,
             SocketState::Connected,
-            53,
-            5353
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            0,
+            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
+            0,
         )));
-        assert!(!expression.matches(&unix_socket("/tmp/a.sock", "/tmp/b.sock")));
     }
 
     #[test]

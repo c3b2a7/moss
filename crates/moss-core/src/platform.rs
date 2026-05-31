@@ -37,6 +37,8 @@ pub struct SocketQuery {
     pub include_tcp: bool,
     /// Include UDP sockets.
     pub include_udp: bool,
+    /// Include raw sockets.
+    pub include_raw: bool,
     /// Include Unix-domain sockets.
     pub include_unix: bool,
 }
@@ -47,6 +49,7 @@ impl Default for SocketQuery {
             include_processes: false,
             include_tcp: true,
             include_udp: true,
+            include_raw: false,
             include_unix: false,
         }
     }
@@ -55,9 +58,9 @@ impl Default for SocketQuery {
 /// Lists macOS sockets matching the requested protocol groups.
 ///
 /// By default, [`SocketQuery`] collects TCP and UDP sockets without process
-/// metadata. Unix-domain sockets and process metadata require walking process
-/// file descriptors through `libproc`, so those options can be slower and may
-/// omit data hidden by macOS permissions.
+/// metadata. Raw and Unix-domain sockets, plus process metadata, require
+/// walking process file descriptors through `libproc`, so those options can be
+/// slower and may omit data hidden by macOS permissions.
 pub fn list_sockets(query: SocketQuery) -> Result<Vec<SocketInfo>, Error> {
     let processes = if query.include_processes {
         process_index()
@@ -71,6 +74,9 @@ pub fn list_sockets(query: SocketQuery) -> Result<Vec<SocketInfo>, Error> {
     }
     if query.include_udp {
         sockets.extend(list_udp(&processes)?);
+    }
+    if query.include_raw {
+        sockets.extend(list_raw(query.include_processes));
     }
     if query.include_unix {
         sockets.extend(list_unix(query.include_processes));
@@ -147,6 +153,7 @@ fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo
         state: SocketState::Tcp(TcpState::from(raw.t_state)),
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
+        ip_protocol: None,
         local: SocketAddress::Inet(local),
         peer: SocketAddress::Inet(peer),
         uid: socket.so_uid,
@@ -169,6 +176,7 @@ fn udp_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo
         state: udp_state(peer.clone()),
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
+        ip_protocol: None,
         local: SocketAddress::Inet(local),
         peer: SocketAddress::Inet(peer),
         uid: socket.so_uid,
@@ -190,6 +198,26 @@ fn list_unix(include_processes: bool) -> Vec<SocketInfo> {
             if let Some(info) = socket_fdinfo(pid, fd.proc_fd)
                 && info.psi.soi_family == ffi::AF_UNIX as i32
                 && let Some(socket) = unix_socket(info, pid, fd.proc_fd, name.as_deref())
+            {
+                sockets.push(socket);
+            }
+        }
+    }
+    sockets
+}
+
+fn list_raw(include_processes: bool) -> Vec<SocketInfo> {
+    let mut sockets = Vec::new();
+    for pid in list_pids() {
+        let name = include_processes.then(|| process_name(pid));
+        for fd in list_fds(pid) {
+            if fd.proc_fdtype != ffi::PROX_FDTYPE_SOCKET {
+                continue;
+            }
+            if let Some(info) = socket_fdinfo(pid, fd.proc_fd)
+                && matches!(info.psi.soi_family as u32, ffi::AF_INET | ffi::AF_INET6)
+                && info.psi.soi_type == libc::SOCK_RAW
+                && let Some(socket) = raw_socket(info, pid, fd.proc_fd, name.as_deref())
             {
                 sockets.push(socket);
             }
@@ -220,9 +248,42 @@ fn unix_socket(
         state,
         recv_queue: info.psi.soi_rcv.sbi_cc,
         send_queue: info.psi.soi_snd.sbi_cc,
+        ip_protocol: None,
         local: SocketAddress::Unix { path: local },
         peer: SocketAddress::Unix { path: peer },
         uid: 0,
+        socket_handle: info.psi.soi_so,
+        pcb_handle: info.psi.soi_pcb,
+        memory: memory_from_socket_info(info),
+        process: process_name.map(|name| ProcessInfo {
+            pid,
+            fd,
+            name: name.to_string(),
+        }),
+    })
+}
+
+fn raw_socket(
+    info: ffi::socket_fdinfo,
+    pid: i32,
+    fd: i32,
+    process_name: Option<&str>,
+) -> Option<SocketInfo> {
+    let family = family_from_socket_family(info.psi.soi_family)?;
+    let inet = unsafe { info.psi.soi_proto.pri_in };
+    let local = inet_endpoint(inet, family, true)?;
+    let peer = inet_endpoint(inet, family, false)?;
+
+    Some(SocketInfo {
+        protocol: Protocol::Raw,
+        family,
+        state: raw_state(info.psi.soi_state, &peer),
+        recv_queue: info.psi.soi_rcv.sbi_cc,
+        send_queue: info.psi.soi_snd.sbi_cc,
+        ip_protocol: Some(info.psi.soi_protocol),
+        local: SocketAddress::Inet(local),
+        peer: SocketAddress::Inet(peer),
+        uid: info.psi.soi_stat.vst_uid,
         socket_handle: info.psi.soi_so,
         pcb_handle: info.psi.soi_pcb,
         memory: memory_from_socket_info(info),
@@ -252,6 +313,14 @@ fn udp_state(peer: Endpoint) -> SocketState {
         SocketState::Unconnected
     } else {
         SocketState::Connected
+    }
+}
+
+fn raw_state(state_bits: i16, peer: &Endpoint) -> SocketState {
+    if state_bits & SOI_S_ISCONNECTED != 0 || !peer.is_wildcard() {
+        SocketState::Connected
+    } else {
+        SocketState::Unconnected
     }
 }
 
@@ -323,6 +392,36 @@ fn endpoint(pcb: &ffi::xinpcb64, family: AddressFamily, local: bool) -> Endpoint
     Endpoint { address, port }
 }
 
+fn inet_endpoint(info: ffi::in_sockinfo, family: AddressFamily, local: bool) -> Option<Endpoint> {
+    let port = if local {
+        info.insi_lport as u16
+    } else {
+        info.insi_fport as u16
+    };
+
+    let address = match (family, local) {
+        (AddressFamily::Ipv4, true) => {
+            let raw = unsafe { info.insi_laddr.ina_46.i46a_addr4.s_addr };
+            IpAddr::V4(Ipv4Addr::from(raw.to_ne_bytes()))
+        }
+        (AddressFamily::Ipv4, false) => {
+            let raw = unsafe { info.insi_faddr.ina_46.i46a_addr4.s_addr };
+            IpAddr::V4(Ipv4Addr::from(raw.to_ne_bytes()))
+        }
+        (AddressFamily::Ipv6, true) => {
+            let raw = unsafe { info.insi_laddr.ina_6.__u6_addr.__u6_addr8 };
+            IpAddr::V6(Ipv6Addr::from(raw))
+        }
+        (AddressFamily::Ipv6, false) => {
+            let raw = unsafe { info.insi_faddr.ina_6.__u6_addr.__u6_addr8 };
+            IpAddr::V6(Ipv6Addr::from(raw))
+        }
+        (AddressFamily::Unix, _) => return None,
+    };
+
+    Some(Endpoint { address, port })
+}
+
 fn family_from_flags(flags: u8) -> Option<AddressFamily> {
     if flags & ffi::INP_IPV4 as u8 != 0 {
         Some(AddressFamily::Ipv4)
@@ -330,6 +429,15 @@ fn family_from_flags(flags: u8) -> Option<AddressFamily> {
         Some(AddressFamily::Ipv6)
     } else {
         None
+    }
+}
+
+fn family_from_socket_family(family: i32) -> Option<AddressFamily> {
+    match family as u32 {
+        ffi::AF_INET => Some(AddressFamily::Ipv4),
+        ffi::AF_INET6 => Some(AddressFamily::Ipv6),
+        ffi::AF_UNIX => Some(AddressFamily::Unix),
+        _ => None,
     }
 }
 
