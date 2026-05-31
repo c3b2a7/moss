@@ -67,6 +67,19 @@ pub fn print_summary(sockets: &[SocketInfo]) {
     println!("UNIX:  {}", summary.unix);
 }
 
+pub fn print_json(sockets: &[SocketInfo], pretty: bool) {
+    let result = if pretty {
+        serde_json::to_string_pretty(sockets)
+    } else {
+        serde_json::to_string(sockets)
+    };
+
+    match result {
+        Ok(json) => println!("{json}"),
+        Err(err) => eprintln!("moss: {err}"),
+    }
+}
+
 struct SocketRow {
     netid: String,
     state: String,

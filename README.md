@@ -6,7 +6,6 @@ It reads socket data through XNU `sysctl` and process metadata through
 
 ## Features
 
-- macOS-native socket inspection using XNU `sysctl` and `libproc`.
 - TCP, UDP, and Unix domain socket listing.
 - IPv4 and IPv6 filtering with `-4` and `-6`.
 - Linux `ss` style protocol and state filters such as `-t`, `-u`, `-x`, `-l`,
@@ -20,6 +19,7 @@ It reads socket data through XNU `sysctl` and process metadata through
   sockets.
 - `ss`-style filter expressions for state, ports, addresses, CIDR ranges, Unix
   paths, boolean logic, and grouping.
+- Support JSON output with `-j`, pretty-printed with `--pretty`.
 
 ## Installation
 
@@ -52,31 +52,31 @@ moss
 Common socket views:
 
 ```sh
-moss -t                 # TCP sockets
-moss -u                 # UDP sockets
-moss -x                 # Unix domain sockets
-moss -t -l              # listening TCP sockets
-moss -t -a              # all TCP sockets
-moss -4                 # IPv4 sockets
-moss -6                 # IPv6 sockets
-moss -s                 # socket summary
+moss -t # TCP sockets
+moss -u # UDP sockets
+moss -x # Unix domain sockets
+moss -t -l # listening TCP sockets
+moss -t -a # all TCP sockets
+moss -4 # IPv4 sockets
+moss -6 # IPv6 sockets
+moss -s # socket summary
 ```
 
 Show process, extended, or memory details:
 
 ```sh
-moss -t -p              # include process name, pid, and fd when available
-moss -t -e              # include uid, socket handle, and PCB handle
-moss -t -m              # include socket memory counters
-moss -t -a -p -m        # all TCP sockets with process and memory info
+moss -t -p # include process name, pid, and fd when available
+moss -t -e # include uid, socket handle, and PCB handle
+moss -t -m # include socket memory counters
+moss -t -a -p -m # all TCP sockets with process and memory info
 ```
 
 Control name resolution:
 
 ```sh
-moss -n                 # numeric ports; do not resolve service names
-moss -r                 # resolve host names
-moss -r -n              # resolve host names but keep numeric ports
+moss -n # numeric ports; do not resolve service names
+moss -r # resolve host names
+moss -r -n # resolve host names but keep numeric ports
 ```
 
 Use filter expressions after the options:

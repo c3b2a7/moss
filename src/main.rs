@@ -1,11 +1,11 @@
 mod output;
 
+use crate::output::{OutputOptions, print_json, print_sockets, print_summary};
 use clap::Parser;
 use moss_core::{
     AddressFamily, FilterExpression, Protocol, SocketFilter, SocketQuery, filter_sockets,
     list_sockets,
 };
-use output::{OutputOptions, print_sockets, print_summary};
 use std::process::ExitCode;
 
 const VERSION: &str = concat!(
@@ -94,6 +94,14 @@ struct Cli {
     #[arg(short = 's', long)]
     summary: bool,
 
+    /// Output sockets as JSON.
+    #[arg(short = 'j', long)]
+    json: bool,
+
+    /// Pretty-print JSON output.
+    #[arg(long, requires = "json")]
+    pretty: bool,
+
     /// Filter sockets with an ss-style expression.
     #[arg(
         trailing_var_arg = true,
@@ -178,6 +186,8 @@ fn main() -> ExitCode {
             let sockets = filter_sockets(sockets, &filter);
             if cli.summary {
                 print_summary(&sockets);
+            } else if cli.json {
+                print_json(&sockets, cli.pretty);
             } else {
                 let options = OutputOptions::from(&cli);
                 print_sockets(&sockets, &options);
