@@ -1,4 +1,4 @@
-use crate::model::{AddressFamily, Protocol, SocketAddress, SocketInfo, TcpState};
+use crate::model::{AddressFamily, Protocol, SocketAddress, SocketInfo, SocketState, TcpState};
 use crate::resolver::service_port_lookup;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::str::FromStr;
@@ -10,7 +10,7 @@ pub struct SocketFilter {
     pub protocols: Vec<Protocol>,
     /// Address family to include.
     pub family: Option<AddressFamily>,
-    /// When true, keep listening TCP sockets and unconnected UDP sockets.
+    /// When true, keep listening sockets and unconnected UDP sockets.
     pub listening: bool,
     /// When true, do not apply the listening-only state filter.
     pub all: bool,
@@ -118,8 +118,8 @@ impl SocketFilter {
     }
 
     fn matches_state(&self, socket: &SocketInfo) -> bool {
-        let listening = socket.state.is_some_and(|state| state.is_listening())
-            || (socket.protocol == Protocol::Udp && socket.peer.is_wildcard());
+        let listening = socket.state.is_listening()
+            || (socket.protocol == Protocol::Udp && socket.state == SocketState::Unconnected);
 
         self.listening && listening
     }
@@ -154,7 +154,10 @@ impl Predicate {
     /// Returns true when the predicate matches a socket.
     pub fn matches(&self, socket: &SocketInfo) -> bool {
         match self {
-            Self::State(states) => socket.state.is_some_and(|state| states.contains(&state)),
+            Self::State(states) => socket
+                .state
+                .tcp_state()
+                .is_some_and(|state| states.contains(&state)),
             Self::Port { side, op, port } => port_matches(socket, *side, *op, *port),
             Self::Address { side, matcher } => address_matches(socket, *side, *matcher),
             Self::UnixPath(matcher) => {
@@ -836,11 +839,11 @@ pub fn filter_sockets(sockets: Vec<SocketInfo>, filter: &SocketFilter) -> Vec<So
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Endpoint, ProcessInfo, SocketMemory, TcpState};
+    use crate::model::{Endpoint, ProcessInfo, SocketMemory, SocketState, TcpState};
 
     fn socket(
         protocol: Protocol,
-        state: Option<TcpState>,
+        state: SocketState,
         local_port: u16,
         peer_port: u16,
     ) -> SocketInfo {
@@ -856,7 +859,7 @@ mod tests {
 
     fn socket_with_addrs(
         protocol: Protocol,
-        state: Option<TcpState>,
+        state: SocketState,
         local_address: IpAddr,
         local_port: u16,
         peer_address: IpAddr,
@@ -907,7 +910,7 @@ mod tests {
             protocol: Protocol::UnixStream,
             ip_protocol: None,
             family: AddressFamily::Unix,
-            state: None,
+            state: SocketState::Unconnected,
             recv_queue: 0,
             send_queue: 0,
             local: SocketAddress::Unix {
@@ -948,12 +951,22 @@ mod tests {
 
         assert!(filter.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             50_000,
             443
         )));
-        assert!(filter.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 443, 0)));
-        assert!(!filter.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 80, 0)));
+        assert!(filter.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::Listen),
+            443,
+            0
+        )));
+        assert!(!filter.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::Listen),
+            80,
+            0
+        )));
     }
 
     #[test]
@@ -963,11 +976,21 @@ mod tests {
             ..SocketFilter::default()
         };
 
-        assert!(filter.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 22, 0)));
-        assert!(filter.matches(&socket(Protocol::Udp, None, 53, 0)));
+        assert!(filter.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::Listen),
+            22,
+            0
+        )));
+        assert!(filter.matches(&socket(
+            Protocol::Udp,
+            SocketState::Unconnected,
+            53,
+            0
+        )));
         assert!(!filter.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             50_000,
             443
         )));
@@ -991,17 +1014,22 @@ mod tests {
 
         assert!(expression.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             50_000,
             443
         )));
         assert!(expression.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             443,
             50_000
         )));
-        assert!(!expression.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 443, 0)));
+        assert!(!expression.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::Listen),
+            443,
+            0
+        )));
     }
 
     #[test]
@@ -1023,7 +1051,7 @@ mod tests {
         };
         assert!(predicate.matches(&socket_with_addrs(
             Protocol::Tcp,
-            Some(TcpState::Listen),
+            SocketState::Tcp(TcpState::Listen),
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)),
             443,
             IpAddr::V4(Ipv4Addr::UNSPECIFIED),
@@ -1039,7 +1067,7 @@ mod tests {
 
         assert!(expression.matches(&socket_with_addrs(
             Protocol::Tcp,
-            Some(TcpState::FinWait1),
+            SocketState::Tcp(TcpState::FinWait1),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             80,
             IpAddr::V4(Ipv4Addr::new(193, 233, 7, 10)),
@@ -1047,14 +1075,24 @@ mod tests {
         )));
         assert!(expression.matches(&socket_with_addrs(
             Protocol::Tcp,
-            Some(TcpState::FinWait1),
+            SocketState::Tcp(TcpState::FinWait1),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             443,
             IpAddr::V4(Ipv4Addr::new(193, 233, 7, 10)),
             50_000,
         )));
-        assert!(!expression.matches(&socket(Protocol::Tcp, Some(TcpState::FinWait1), 80, 50_000,)));
-        assert!(!expression.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 443, 0)));
+        assert!(!expression.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::FinWait1),
+            80,
+            50_000,
+        )));
+        assert!(!expression.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::Listen),
+            443,
+            0
+        )));
     }
     #[test]
     fn parses_port_comparison_aliases() {
@@ -1063,20 +1101,25 @@ mod tests {
 
         assert!(greater.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             50_000,
             443
         )));
-        assert!(!greater.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 80, 0)));
+        assert!(!greater.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::Listen),
+            80,
+            0
+        )));
         assert!(not_equal.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             50_000,
             80
         )));
         assert!(!not_equal.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             50_000,
             443
         )));
@@ -1089,12 +1132,22 @@ mod tests {
 
         assert!(connected.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             50_000,
             443
         )));
-        assert!(!connected.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 22, 0)));
-        assert!(!exclude_listen.matches(&socket(Protocol::Tcp, Some(TcpState::Listen), 22, 0)));
+        assert!(!connected.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::Listen),
+            22,
+            0
+        )));
+        assert!(!exclude_listen.matches(&socket(
+            Protocol::Tcp,
+            SocketState::Tcp(TcpState::Listen),
+            22,
+            0
+        )));
     }
 
     #[test]
@@ -1103,7 +1156,7 @@ mod tests {
 
         assert!(expression.matches(&socket_with_addrs(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             80,
             IpAddr::V4(Ipv4Addr::new(193, 233, 7, 10)),
@@ -1111,7 +1164,7 @@ mod tests {
         )));
         assert!(!expression.matches(&socket_with_addrs(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             80,
             IpAddr::V4(Ipv4Addr::new(193, 233, 8, 10)),
@@ -1125,7 +1178,7 @@ mod tests {
 
         assert!(expression.matches(&socket_with_addrs(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             50_000,
             IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
@@ -1133,7 +1186,7 @@ mod tests {
         )));
         assert!(!expression.matches(&socket_with_addrs(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             50_000,
             IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
@@ -1147,7 +1200,7 @@ mod tests {
 
         assert!(expression.matches(&socket_with_addrs(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             IpAddr::V6("::1".parse().unwrap()),
             50_000,
             IpAddr::V6("2001:db8::1".parse().unwrap()),
@@ -1169,10 +1222,39 @@ mod tests {
 
         assert!(expression.matches(&socket(
             Protocol::Tcp,
-            Some(TcpState::Established),
+            SocketState::Tcp(TcpState::Established),
             50_000,
             22
         )));
+    }
+
+    #[test]
+    fn listening_matches_unix_listening_but_not_connected() {
+        let filter = SocketFilter {
+            listening: true,
+            ..SocketFilter::default()
+        };
+
+        let mut listening = unix_socket("/tmp/listener.sock", "*");
+        listening.state = SocketState::Listening;
+        let mut connected = unix_socket("/tmp/peer.sock", "/tmp/other.sock");
+        connected.state = SocketState::Connected;
+
+        assert!(filter.matches(&listening));
+        assert!(!filter.matches(&connected));
+    }
+
+    #[test]
+    fn tcp_state_predicates_ignore_non_tcp_states() {
+        let expression = parse("state connected");
+
+        assert!(!expression.matches(&socket(
+            Protocol::Udp,
+            SocketState::Connected,
+            53,
+            5353
+        )));
+        assert!(!expression.matches(&unix_socket("/tmp/a.sock", "/tmp/b.sock")));
     }
 
     #[test]

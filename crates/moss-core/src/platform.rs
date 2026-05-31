@@ -1,6 +1,6 @@
 use crate::model::{
     AddressFamily, Endpoint, ProcessInfo, Protocol, SocketAddress, SocketInfo, SocketMemory,
-    TcpState,
+    SocketState, TcpState,
 };
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -175,7 +175,7 @@ fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo
         protocol: Protocol::Tcp,
         ip_protocol: None,
         family,
-        state: Some(TcpState::from(raw.t_state)),
+        state: SocketState::Tcp(TcpState::from(raw.t_state)),
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
         local: SocketAddress::Inet(local),
@@ -191,16 +191,18 @@ fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo
 fn udp_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
     let family = family_from_flags(pcb.inp_vflag)?;
     let socket = pcb.xi_socket;
+    let local = endpoint(&pcb, family, true);
+    let peer = endpoint(&pcb, family, false);
 
     Some(SocketInfo {
         protocol: Protocol::Udp,
         ip_protocol: None,
         family,
-        state: None,
+        state: udp_state(peer.clone()),
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
-        local: SocketAddress::Inet(endpoint(&pcb, family, true)),
-        peer: SocketAddress::Inet(endpoint(&pcb, family, false)),
+        local: SocketAddress::Inet(local),
+        peer: SocketAddress::Inet(peer),
         uid: socket.so_uid,
         socket_handle: socket.xso_so,
         pcb_handle: socket.so_pcb,
@@ -219,7 +221,7 @@ fn raw_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo
         protocol: Protocol::Raw,
         ip_protocol: Some(pcb.inp_ip_p),
         family,
-        state: None,
+        state: udp_state(peer.clone()),
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
         local: SocketAddress::Inet(local),
@@ -283,12 +285,17 @@ fn unix_socket(
     } else {
         "*".to_string()
     };
+    let state = if socket.so_state as u32 & ffi::SOI_S_ISCONNECTED != 0 || peer != "*" {
+        SocketState::Connected
+    } else {
+        SocketState::Unconnected
+    };
 
     SocketInfo {
         protocol,
         ip_protocol: None,
         family: AddressFamily::Unix,
-        state: None,
+        state,
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
         local: SocketAddress::Unix { path: local },
@@ -312,6 +319,14 @@ fn unix_path(addr: ffi::sockaddr_un) -> String {
     }
     let bytes: Vec<u8> = addr.sun_path[..len].iter().map(|ch| *ch as u8).collect();
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn udp_state(peer: Endpoint) -> SocketState {
+    if peer.is_wildcard() && peer.port == 0 {
+        SocketState::Unconnected
+    } else {
+        SocketState::Connected
+    }
 }
 
 fn memory_from_xsocket(socket: ffi::xsocket64) -> SocketMemory {
