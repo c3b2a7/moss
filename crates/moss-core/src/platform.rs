@@ -56,9 +56,9 @@ impl Default for SocketQuery {
 /// Lists macOS sockets matching the requested protocol groups.
 ///
 /// By default, [`SocketQuery`] collects TCP and UDP sockets without process
-/// metadata. Unix-domain sockets and process metadata require walking process
-/// file descriptors through `libproc`, so those options can be slower and may
-/// omit data hidden by macOS permissions.
+/// metadata. Process metadata requires walking process file descriptors through
+/// `libproc`, so that option can be slower and may omit data hidden by macOS
+/// permissions.
 pub fn list_sockets(query: SocketQuery) -> Result<Vec<SocketInfo>, Error> {
     let processes = if query.include_processes {
         process_index()
@@ -77,7 +77,7 @@ pub fn list_sockets(query: SocketQuery) -> Result<Vec<SocketInfo>, Error> {
         sockets.extend(list_raw(&processes)?);
     }
     if query.include_unix {
-        sockets.extend(list_unix(query.include_processes));
+        sockets.extend(list_unix(&processes)?);
     }
     sockets.sort_by_key(|socket| {
         (
@@ -232,59 +232,73 @@ fn raw_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo
     })
 }
 
-fn list_unix(include_processes: bool) -> Vec<SocketInfo> {
+fn list_unix(processes: &ProcessIndex) -> Result<Vec<SocketInfo>, Error> {
     let mut sockets = Vec::new();
-    for pid in list_pids() {
-        let name = include_processes.then(|| process_name(pid));
-        for fd in list_fds(pid) {
-            if fd.proc_fdtype != ffi::PROX_FDTYPE_SOCKET {
-                continue;
-            }
-            if let Some(info) = socket_fdinfo(pid, fd.proc_fd)
-                && info.psi.soi_family == ffi::AF_UNIX as i32
-                && let Some(socket) = unix_socket(info, pid, fd.proc_fd, name.as_deref())
-            {
-                sockets.push(socket);
-            }
+    sockets.extend(list_unix_protocol(
+        "net.local.stream.pcblist64",
+        Protocol::UnixStream,
+        processes,
+    )?);
+    sockets.extend(list_unix_protocol(
+        "net.local.dgram.pcblist64",
+        Protocol::UnixDatagram,
+        processes,
+    )?);
+    Ok(sockets)
+}
+
+fn list_unix_protocol(
+    sysctl: &'static str,
+    protocol: Protocol,
+    processes: &ProcessIndex,
+) -> Result<Vec<SocketInfo>, Error> {
+    let buf = sysctl_bytes(sysctl)?;
+    let mut sockets = Vec::new();
+    let mut offset = size_of::<ffi::xunpgen>();
+
+    while offset + size_of::<u32>() <= buf.len() {
+        let len = read_unaligned::<u32>(&buf[offset..]) as usize;
+        if len == 0 || offset + len > buf.len() || len == size_of::<ffi::xunpgen>() {
+            break;
         }
+        if len >= size_of::<ffi::moss_xunpcb64>() {
+            let raw = read_unaligned::<ffi::moss_xunpcb64>(&buf[offset..]);
+            sockets.push(unix_socket(raw, protocol, processes));
+        }
+        offset += len;
     }
-    sockets
+
+    Ok(sockets)
 }
 
 fn unix_socket(
-    info: ffi::socket_fdinfo,
-    pid: i32,
-    fd: i32,
-    process_name: Option<&str>,
-) -> Option<SocketInfo> {
-    let protocol = match info.psi.soi_type as u32 {
-        ffi::SOCK_STREAM => Protocol::UnixStream,
-        ffi::SOCK_DGRAM => Protocol::UnixDatagram,
-        _ => return None,
+    pcb: ffi::moss_xunpcb64,
+    protocol: Protocol,
+    processes: &ProcessIndex,
+) -> SocketInfo {
+    let socket = pcb.xu_socket;
+    let local = unix_path(unsafe { pcb.xu_au.xuu_addr });
+    let peer = if socket.so_state as u32 & ffi::SOI_S_ISCONNECTED != 0 {
+        unix_path(unsafe { pcb.xu_cau.xuu_caddr })
+    } else {
+        "*".to_string()
     };
-    let unix = unsafe { info.psi.soi_proto.pri_un };
-    let local = unix_path(unsafe { unix.unsi_addr.ua_sun });
-    let peer = unix_path(unsafe { unix.unsi_caddr.ua_sun });
 
-    Some(SocketInfo {
+    SocketInfo {
         protocol,
         ip_protocol: None,
         family: AddressFamily::Unix,
         state: None,
-        recv_queue: info.psi.soi_rcv.sbi_cc,
-        send_queue: info.psi.soi_snd.sbi_cc,
+        recv_queue: socket.so_rcv.sb_cc,
+        send_queue: socket.so_snd.sb_cc,
         local: SocketAddress::Unix { path: local },
         peer: SocketAddress::Unix { path: peer },
-        uid: 0,
-        socket_handle: info.psi.soi_so,
-        pcb_handle: info.psi.soi_pcb,
-        memory: memory_from_socket_info(info),
-        process: process_name.map(|name| ProcessInfo {
-            pid,
-            fd,
-            name: name.to_string(),
-        }),
-    })
+        uid: socket.so_uid,
+        socket_handle: socket.xso_so,
+        pcb_handle: pcb.xu_unpp,
+        memory: memory_from_xsocket(socket),
+        process: lookup_process(processes, socket.xso_so, pcb.xu_unpp),
+    }
 }
 
 fn unix_path(addr: ffi::sockaddr_un) -> String {
@@ -310,19 +324,6 @@ fn memory_from_xsocket(socket: ffi::xsocket64) -> SocketMemory {
         send_high_water: socket.so_snd.sb_hiwat,
         send_mbuf_bytes: socket.so_snd.sb_mbcnt,
         send_mbuf_limit: socket.so_snd.sb_mbmax,
-    }
-}
-
-fn memory_from_socket_info(info: ffi::socket_fdinfo) -> SocketMemory {
-    SocketMemory {
-        recv_bytes: info.psi.soi_rcv.sbi_cc,
-        recv_high_water: info.psi.soi_rcv.sbi_hiwat,
-        recv_mbuf_bytes: info.psi.soi_rcv.sbi_mbcnt,
-        recv_mbuf_limit: info.psi.soi_rcv.sbi_mbmax,
-        send_bytes: info.psi.soi_snd.sbi_cc,
-        send_high_water: info.psi.soi_snd.sbi_hiwat,
-        send_mbuf_bytes: info.psi.soi_snd.sbi_mbcnt,
-        send_mbuf_limit: info.psi.soi_snd.sbi_mbmax,
     }
 }
 
