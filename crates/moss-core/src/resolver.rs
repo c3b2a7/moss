@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
 const SERVICES_PATH: &str = "/etc/services";
+const PROTOCOLS_PATH: &str = "/etc/protocols";
 
 /// Name resolver configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +74,11 @@ impl Resolver {
         service_name_lookup(port, protocol)
     }
 
+    /// Looks up the canonical protocol name for an IP protocol number.
+    pub fn protocol_name(&mut self, protocol: u8) -> Option<String> {
+        protocol_name_lookup(protocol)
+    }
+
     /// Clears cached host-name lookup results.
     pub fn clear_cache(&mut self) {
         self.host_name_cache.clear();
@@ -134,6 +140,11 @@ pub fn service_port_lookup(name: &str) -> Option<u16> {
     service_port_lookup_from(services(), name)
 }
 
+/// Looks up the canonical protocol name for an IP protocol number.
+pub fn protocol_name_lookup(protocol: u8) -> Option<String> {
+    protocols().by_number.get(&protocol).cloned()
+}
+
 fn service_port_lookup_from(services: &ServiceTables, name: &str) -> Option<u16> {
     [Protocol::Tcp, Protocol::Udp]
         .into_iter()
@@ -146,10 +157,22 @@ fn services() -> &'static ServiceTables {
     SERVICES.get_or_init(|| parse_services(&fs::read_to_string(SERVICES_PATH).unwrap_or_default()))
 }
 
+fn protocols() -> &'static ProtocolTables {
+    static PROTOCOLS: OnceLock<ProtocolTables> = OnceLock::new();
+
+    PROTOCOLS
+        .get_or_init(|| parse_protocols(&fs::read_to_string(PROTOCOLS_PATH).unwrap_or_default()))
+}
+
 #[derive(Debug, Default)]
 struct ServiceTables {
     by_port: HashMap<(u16, Protocol), String>,
     by_name: HashMap<(String, Protocol), u16>,
+}
+
+#[derive(Debug, Default)]
+struct ProtocolTables {
+    by_number: HashMap<u8, String>,
 }
 
 fn parse_services(contents: &str) -> ServiceTables {
@@ -197,6 +220,28 @@ fn parse_port_protocol(value: &str) -> Option<(u16, Protocol)> {
     };
 
     Some((port, protocol))
+}
+
+fn parse_protocols(contents: &str) -> ProtocolTables {
+    let mut protocols = ProtocolTables::default();
+
+    for line in contents.lines() {
+        let line = line.split_once('#').map_or(line, |(line, _)| line);
+        let mut fields = line.split_whitespace();
+        let Some(name) = fields.next() else {
+            continue;
+        };
+        let Some(number) = fields.next().and_then(|number| number.parse().ok()) else {
+            continue;
+        };
+
+        protocols
+            .by_number
+            .entry(number)
+            .or_insert_with(|| name.to_string());
+    }
+
+    protocols
 }
 
 /// Performs an uncached reverse host-name lookup.
@@ -332,6 +377,24 @@ different 4321/tcp
         );
 
         assert_eq!(service_port_lookup_from(&services, "different"), Some(4321));
+    }
+
+    #[test]
+    fn parses_protocols_by_number() {
+        let protocols = parse_protocols(
+            r#"
+icmp      1    ICMP
+igmp      2    IGMP
+ipv6-icmp 58   IPV6-ICMP icmp6
+override  1
+ignored   nope
+"#,
+        );
+
+        assert_eq!(protocols.by_number.get(&1), Some(&"icmp".to_string()));
+        assert_eq!(protocols.by_number.get(&2), Some(&"igmp".to_string()));
+        assert_eq!(protocols.by_number.get(&58), Some(&"ipv6-icmp".to_string()));
+        assert!(!protocols.by_number.contains_key(&0));
     }
 
     #[test]

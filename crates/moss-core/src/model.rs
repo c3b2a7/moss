@@ -11,6 +11,8 @@ pub enum Protocol {
     Tcp,
     /// UDP over IPv4 or IPv6.
     Udp,
+    /// Raw IPv4 or IPv6 socket.
+    Raw,
     /// Unix-domain stream socket.
     UnixStream,
     /// Unix-domain datagram socket.
@@ -22,6 +24,7 @@ impl fmt::Display for Protocol {
         match self {
             Self::Tcp => f.write_str("tcp"),
             Self::Udp => f.write_str("udp"),
+            Self::Raw => f.write_str("raw"),
             Self::UnixStream => f.write_str("u_str"),
             Self::UnixDatagram => f.write_str("u_dgr"),
         }
@@ -303,6 +306,8 @@ pub struct SocketMemory {
 pub struct SocketInfo {
     /// Socket protocol.
     pub protocol: Protocol,
+    /// IP protocol number for raw sockets.
+    pub ip_protocol: Option<u8>,
     /// Socket address family.
     pub family: AddressFamily,
     /// TCP state, or `None` for UDP and Unix-domain sockets.

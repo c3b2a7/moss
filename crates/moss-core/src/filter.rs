@@ -864,6 +864,7 @@ mod tests {
     ) -> SocketInfo {
         SocketInfo {
             protocol,
+            ip_protocol: None,
             family: if local_address.is_ipv4() {
                 AddressFamily::Ipv4
             } else {
@@ -904,6 +905,7 @@ mod tests {
     fn unix_socket(local: &str, peer: &str) -> SocketInfo {
         SocketInfo {
             protocol: Protocol::UnixStream,
+            ip_protocol: None,
             family: AddressFamily::Unix,
             state: None,
             recv_queue: 0,

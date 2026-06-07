@@ -35,6 +35,8 @@ pub struct SocketQuery {
     pub include_tcp: bool,
     /// Include UDP sockets.
     pub include_udp: bool,
+    /// Include raw sockets.
+    pub include_raw: bool,
     /// Include Unix-domain sockets.
     pub include_unix: bool,
 }
@@ -45,6 +47,7 @@ impl Default for SocketQuery {
             include_processes: false,
             include_tcp: true,
             include_udp: true,
+            include_raw: false,
             include_unix: false,
         }
     }
@@ -69,6 +72,9 @@ pub fn list_sockets(query: SocketQuery) -> Result<Vec<SocketInfo>, Error> {
     }
     if query.include_udp {
         sockets.extend(list_udp(&processes)?);
+    }
+    if query.include_raw {
+        sockets.extend(list_raw(&processes)?);
     }
     if query.include_unix {
         sockets.extend(list_unix(query.include_processes));
@@ -132,6 +138,32 @@ fn list_udp(processes: &ProcessIndex) -> Result<Vec<SocketInfo>, Error> {
     Ok(sockets)
 }
 
+fn list_raw(processes: &ProcessIndex) -> Result<Vec<SocketInfo>, Error> {
+    let buf = sysctl_bytes("net.inet.raw.pcblist64")?;
+    let mut sockets = Vec::new();
+    let mut offset = size_of::<ffi::xinpgen>();
+
+    while offset + size_of::<u32>() <= buf.len() {
+        let small_len = read_unaligned::<u32>(&buf[offset..]) as usize;
+        if small_len == 0 || small_len == size_of::<ffi::xinpgen>() {
+            break;
+        }
+        let len = read_unaligned::<u64>(&buf[offset..]) as usize;
+        if len == 0 || offset + len > buf.len() {
+            break;
+        }
+        if len >= size_of::<ffi::xinpcb64>() {
+            let raw = read_unaligned::<ffi::xinpcb64>(&buf[offset..]);
+            if let Some(socket) = raw_socket(raw, processes) {
+                sockets.push(socket);
+            }
+        }
+        offset += len;
+    }
+
+    Ok(sockets)
+}
+
 fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
     let pcb = raw.xt_inpcb;
     let family = family_from_flags(pcb.inp_vflag)?;
@@ -141,6 +173,7 @@ fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo
 
     Some(SocketInfo {
         protocol: Protocol::Tcp,
+        ip_protocol: None,
         family,
         state: Some(TcpState::from(raw.t_state)),
         recv_queue: socket.so_rcv.sb_cc,
@@ -161,12 +194,36 @@ fn udp_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo
 
     Some(SocketInfo {
         protocol: Protocol::Udp,
+        ip_protocol: None,
         family,
         state: None,
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
         local: SocketAddress::Inet(endpoint(&pcb, family, true)),
         peer: SocketAddress::Inet(endpoint(&pcb, family, false)),
+        uid: socket.so_uid,
+        socket_handle: socket.xso_so,
+        pcb_handle: socket.so_pcb,
+        memory: memory_from_xsocket(socket),
+        process: lookup_process(processes, socket.xso_so, socket.so_pcb),
+    })
+}
+
+fn raw_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
+    let family = family_from_flags(pcb.inp_vflag)?;
+    let socket = pcb.xi_socket;
+    let local = endpoint(&pcb, family, true);
+    let peer = endpoint(&pcb, family, false);
+
+    Some(SocketInfo {
+        protocol: Protocol::Raw,
+        ip_protocol: Some(pcb.inp_ip_p),
+        family,
+        state: None,
+        recv_queue: socket.so_rcv.sb_cc,
+        send_queue: socket.so_snd.sb_cc,
+        local: SocketAddress::Inet(local),
+        peer: SocketAddress::Inet(peer),
         uid: socket.so_uid,
         socket_handle: socket.xso_so,
         pcb_handle: socket.so_pcb,
@@ -211,6 +268,7 @@ fn unix_socket(
 
     Some(SocketInfo {
         protocol,
+        ip_protocol: None,
         family: AddressFamily::Unix,
         state: None,
         recv_queue: info.psi.soi_rcv.sbi_cc,
