@@ -27,6 +27,7 @@ EXAMPLES:
   moss                                Show TCP and UDP sockets
   moss -t -l                          Show listening TCP sockets
   moss -u                             Show UDP sockets
+  moss -w                             Show raw sockets
   moss -x                             Show Unix domain sockets
   moss -t -p                          Show TCP sockets with process info
   moss -t -a -p -m                    Show all TCP sockets with memory info
@@ -49,6 +50,10 @@ struct Cli {
     /// Show Unix domain sockets.
     #[arg(short = 'x', long, conflicts_with_all = ["ipv4", "ipv6"])]
     unix: bool,
+
+    /// Show raw sockets.
+    #[arg(short = 'w', long)]
+    raw: bool,
 
     /// Show listening sockets.
     #[arg(short = 'l', long)]
@@ -102,7 +107,7 @@ struct Cli {
     #[arg(long, requires = "json")]
     pretty: bool,
 
-    /// Filter sockets with an ss-style expression.
+    /// Filter sockets with a ss-style expression.
     #[arg(
         trailing_var_arg = true,
         long_help = "\
@@ -197,6 +202,9 @@ fn protocols(cli: &Cli) -> Vec<Protocol> {
     if cli.unix {
         protocols.extend([Protocol::UnixStream, Protocol::UnixDatagram]);
     }
+    if cli.raw {
+        protocols.push(Protocol::Raw);
+    }
     if cli.tcp {
         protocols.push(Protocol::Tcp)
     }
@@ -211,6 +219,7 @@ fn socket_query(cli: &Cli, family: Option<AddressFamily>) -> SocketQuery {
         include_processes: cli.processes,
         include_tcp: query_includes_protocol(cli, Protocol::Tcp),
         include_udp: query_includes_protocol(cli, Protocol::Udp),
+        include_raw: query_includes_protocol(cli, Protocol::Raw),
         include_unix: !matches!(family, Some(AddressFamily::Ipv4 | AddressFamily::Ipv6))
             && (query_includes_protocol(cli, Protocol::UnixStream)
                 || query_includes_protocol(cli, Protocol::UnixDatagram)),
@@ -218,7 +227,7 @@ fn socket_query(cli: &Cli, family: Option<AddressFamily>) -> SocketQuery {
 }
 
 fn query_includes_protocol(cli: &Cli, protocol: Protocol) -> bool {
-    let no_protocol_filter = !cli.tcp && !cli.udp && !cli.unix;
+    let no_protocol_filter = !cli.tcp && !cli.udp && !cli.unix && !cli.raw;
     if no_protocol_filter {
         return matches!(protocol, Protocol::Tcp | Protocol::Udp);
     }
@@ -226,12 +235,13 @@ fn query_includes_protocol(cli: &Cli, protocol: Protocol) -> bool {
     match protocol {
         Protocol::Tcp => cli.tcp,
         Protocol::Udp => cli.udp,
+        Protocol::Raw => cli.raw,
         Protocol::UnixStream | Protocol::UnixDatagram => cli.unix,
     }
 }
 
 fn family(cli: &Cli) -> Option<AddressFamily> {
-    if cli.unix && !cli.tcp && !cli.udp {
+    if cli.unix && !cli.tcp && !cli.udp && !cli.raw {
         return Some(AddressFamily::Unix);
     }
 
@@ -268,6 +278,7 @@ mod tests {
 
         assert!(query.include_tcp);
         assert!(query.include_udp);
+        assert!(!query.include_raw);
         assert!(!query.include_unix);
     }
 
@@ -278,6 +289,7 @@ mod tests {
 
         assert!(query.include_tcp);
         assert!(query.include_udp);
+        assert!(!query.include_raw);
         assert!(!query.include_unix);
     }
 
@@ -288,6 +300,7 @@ mod tests {
 
         assert!(query.include_tcp);
         assert!(!query.include_udp);
+        assert!(!query.include_raw);
         assert!(!query.include_unix);
     }
 
@@ -298,6 +311,7 @@ mod tests {
 
         assert!(query.include_tcp);
         assert!(!query.include_udp);
+        assert!(!query.include_raw);
         assert!(!query.include_unix);
     }
 
@@ -308,6 +322,17 @@ mod tests {
 
         assert!(!query.include_tcp);
         assert!(query.include_udp);
+        assert!(!query.include_raw);
+        assert!(!query.include_unix);
+    }
+
+    #[test]
+    fn raw_flag_queries_only_raw_sockets() {
+        let cli = Cli::parse_from(["moss", "-w"]);
+        let query = socket_query(&cli, family(&cli));
+        assert!(!query.include_tcp);
+        assert!(!query.include_udp);
+        assert!(query.include_raw);
         assert!(!query.include_unix);
     }
 
@@ -318,6 +343,7 @@ mod tests {
 
         assert!(!query.include_tcp);
         assert!(!query.include_udp);
+        assert!(!query.include_raw);
         assert!(query.include_unix);
     }
 
@@ -344,12 +370,20 @@ mod tests {
     }
 
     #[test]
-    fn summary_with_ipv4_filter_excludes_unix_sockets() {
+    fn raw_flag_prevents_unix_family_filter() {
+        let cli = Cli::parse_from(["moss", "-x", "-w"]);
+
+        assert_eq!(family(&cli), None);
+    }
+
+    #[test]
+    fn summary_with_ipv4_filter_queries_tcp_and_udp_only() {
         let cli = Cli::parse_from(["moss", "-s", "-4"]);
         let query = socket_query(&cli, family(&cli));
 
         assert!(query.include_tcp);
         assert!(query.include_udp);
+        assert!(!query.include_raw);
         assert!(!query.include_unix);
     }
 }

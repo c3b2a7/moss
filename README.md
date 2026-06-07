@@ -6,9 +6,9 @@ It reads socket data through XNU `sysctl` and process metadata through
 
 ## Features
 
-- TCP, UDP, and Unix domain socket listing.
+- TCP, UDP, raw IP, and Unix domain socket listing.
 - IPv4 and IPv6 filtering with `-4` and `-6`.
-- Linux `ss` style protocol and state filters such as `-t`, `-u`, `-x`, `-l`,
+- Linux `ss` style protocol and state filters such as `-t`, `-u`, `-w`, `-x`, `-l`,
   and `-a`.
 - Optional process details with process name, pid, and file descriptor.
 - Optional extended socket metadata and socket memory counters.
@@ -54,6 +54,7 @@ Common socket views:
 ```sh
 moss -t # TCP sockets
 moss -u # UDP sockets
+moss -w # raw sockets
 moss -x # Unix domain sockets
 moss -t -l # listening TCP sockets
 moss -t -a # all TCP sockets
