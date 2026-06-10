@@ -16,12 +16,12 @@ pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) {
     let rows: Vec<SocketRow> = sockets
         .iter()
         .map(|socket| SocketRow {
-            netid: socket.protocol.to_string(),
+            netid: netid_text(socket),
             state: state_text(socket),
             recv_queue: socket.recv_queue.to_string(),
             send_queue: socket.send_queue.to_string(),
-            local: formatter.format(&socket.local, socket.protocol),
-            peer: formatter.format(&socket.peer, socket.protocol),
+            local: formatter.format(socket, &socket.local, true),
+            peer: formatter.format(socket, &socket.peer, false),
             process: socket.process.as_ref().map(ToString::to_string),
         })
         .collect();
@@ -64,6 +64,7 @@ pub fn print_summary(sockets: &[SocketInfo]) {
         summary.tcp, summary.established, summary.listening
     );
     println!("UDP:   {}", summary.udp);
+    println!("RAW:   {}", summary.raw);
     println!("UNIX:  {}", summary.unix);
 }
 
@@ -160,6 +161,7 @@ impl SocketWidths {
 struct SocketSummary {
     tcp: usize,
     udp: usize,
+    raw: usize,
     unix: usize,
     established: usize,
     listening: usize,
@@ -180,6 +182,7 @@ impl SocketSummary {
                     }
                 }
                 Protocol::Udp => summary.udp += 1,
+                Protocol::Raw => summary.raw += 1,
                 Protocol::UnixStream | Protocol::UnixDatagram => summary.unix += 1,
             }
         }
@@ -193,6 +196,13 @@ fn state_text(socket: &SocketInfo) -> String {
         .state
         .map(|state| state.to_string())
         .unwrap_or_else(|| "UNCONN".to_string())
+}
+
+fn netid_text(socket: &SocketInfo) -> String {
+    match (socket.protocol, socket.family) {
+        (Protocol::Raw, moss_core::AddressFamily::Ipv6) => "raw6".to_string(),
+        _ => socket.protocol.to_string(),
+    }
 }
 
 fn color_state(state: &str) -> String {
@@ -226,7 +236,7 @@ impl<'a> AddressFormatter<'a> {
         }
     }
 
-    fn format(&mut self, address: &SocketAddress, protocol: Protocol) -> String {
+    fn format(&mut self, socket: &SocketInfo, address: &SocketAddress, local: bool) -> String {
         match address {
             SocketAddress::Inet(endpoint) => {
                 let host = if self.options.resolve {
@@ -234,10 +244,13 @@ impl<'a> AddressFormatter<'a> {
                 } else {
                     endpoint.address.to_string()
                 };
-                let port = if self.options.numeric {
+
+                let port = if socket.protocol == Protocol::Raw {
+                    self.raw_protocol_name(socket, local)
+                } else if self.options.numeric {
                     endpoint.port.to_string()
                 } else {
-                    self.service_name(endpoint.port, protocol)
+                    self.service_name(endpoint.port, socket.protocol)
                 };
 
                 match endpoint.address {
@@ -259,5 +272,141 @@ impl<'a> AddressFormatter<'a> {
         self.resolver
             .service_name(port, protocol)
             .unwrap_or_else(|| port.to_string())
+    }
+
+    fn raw_protocol_name(&mut self, socket: &SocketInfo, local: bool) -> String {
+        let Some(protocol) = socket.ip_protocol else {
+            return "*".to_string();
+        };
+        if !local {
+            return "*".to_string();
+        }
+        if self.options.numeric {
+            return protocol.to_string();
+        }
+
+        self.resolver
+            .protocol_name(protocol)
+            .unwrap_or_else(|| format!("ipproto-{protocol}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AddressFormatter, OutputOptions, netid_text};
+    use moss_core::{
+        AddressFamily, Endpoint, Protocol, SocketAddress, SocketInfo, SocketMemory, TcpState,
+    };
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn raw_socket_uses_raw_netid_and_protocol_name_port() {
+        let mut socket = socket(Protocol::Raw, AddressFamily::Ipv4);
+        socket.ip_protocol = Some(1);
+        let options = options(false);
+        let mut formatter = AddressFormatter::new(&options);
+
+        assert_eq!(netid_text(&socket), "raw");
+        assert_eq!(
+            formatter.format(&socket, &socket.local, true),
+            "127.0.0.1:icmp"
+        );
+        assert_eq!(
+            formatter.format(&socket, &socket.peer, false),
+            "127.0.0.1:*"
+        );
+    }
+
+    #[test]
+    fn raw_protocol_port_uses_numeric_or_ipproto_fallback() {
+        let mut socket = socket(Protocol::Raw, AddressFamily::Ipv4);
+        socket.ip_protocol = Some(143);
+        let named_options = options(false);
+        let mut formatter = AddressFormatter::new(&named_options);
+
+        assert_eq!(
+            formatter.format(&socket, &socket.local, true),
+            "127.0.0.1:ipproto-143"
+        );
+
+        let numeric_options = options(true);
+        let mut formatter = AddressFormatter::new(&numeric_options);
+        assert_eq!(
+            formatter.format(&socket, &socket.local, true),
+            "127.0.0.1:143"
+        );
+    }
+
+    #[test]
+    fn raw_ipv6_keeps_raw6_netid() {
+        assert_eq!(
+            netid_text(&socket(Protocol::Raw, AddressFamily::Ipv6)),
+            "raw6"
+        );
+    }
+
+    #[test]
+    fn summary_counts_raw_separately() {
+        let summary = super::SocketSummary::from_sockets(&[
+            socket(Protocol::Raw, AddressFamily::Ipv4),
+            socket(Protocol::Raw, AddressFamily::Ipv6),
+            socket(Protocol::Udp, AddressFamily::Ipv4),
+        ]);
+
+        assert_eq!(summary.raw, 2);
+        assert_eq!(summary.udp, 1);
+        assert_eq!(summary.tcp, 0);
+    }
+
+    fn socket(protocol: Protocol, family: AddressFamily) -> SocketInfo {
+        let local = match family {
+            AddressFamily::Ipv4 => SocketAddress::Inet(Endpoint {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: 0,
+            }),
+            AddressFamily::Ipv6 => SocketAddress::Inet(Endpoint {
+                address: IpAddr::V6(Ipv6Addr::LOCALHOST),
+                port: 0,
+            }),
+            AddressFamily::Unix => SocketAddress::Unix {
+                path: "*".to_string(),
+            },
+        };
+
+        SocketInfo {
+            protocol,
+            ip_protocol: None,
+            family,
+            state: Some(TcpState::Listen),
+            recv_queue: 0,
+            send_queue: 0,
+            local: local.clone(),
+            peer: local,
+            uid: 0,
+            socket_handle: 0,
+            pcb_handle: 0,
+            memory: SocketMemory {
+                recv_bytes: 0,
+                recv_high_water: 0,
+                recv_mbuf_bytes: 0,
+                recv_mbuf_limit: 0,
+                send_bytes: 0,
+                send_high_water: 0,
+                send_mbuf_bytes: 0,
+                send_mbuf_limit: 0,
+            },
+            process: None,
+        }
+    }
+
+    fn options(numeric: bool) -> OutputOptions {
+        OutputOptions {
+            show_processes: false,
+            numeric,
+            resolve: false,
+            resolver_cache: false,
+            extended: false,
+            memory: false,
+        }
     }
 }

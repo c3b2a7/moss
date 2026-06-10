@@ -143,6 +143,7 @@ jobs:
           smoke/moss --help >/dev/null
           smoke/moss -t -p -n >/dev/null
           smoke/moss -u -p -n >/dev/null
+          smoke/moss -w -p -n >/dev/null
           smoke/moss -x -p -n >/dev/null
           smoke/moss -s -p -n >/dev/null
           smoke/moss -e -m -n >/dev/null
