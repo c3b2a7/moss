@@ -8,6 +8,8 @@ fn main() {
         .allowlist_type("xinpgen")
         .allowlist_type("xinpcb64")
         .allowlist_type("xtcpcb64")
+        .allowlist_type("xunpgen")
+        .allowlist_type("moss_xunpcb64")
         .allowlist_type("xsocket64")
         .allowlist_type("xsockbuf")
         .allowlist_type("socket_fdinfo")
@@ -27,6 +29,7 @@ fn main() {
         .allowlist_var("TCPS_.*")
         .allowlist_var("PROC_.*")
         .allowlist_var("PROX_FDTYPE_SOCKET")
+        .allowlist_var("SOI_S_ISCONNECTED")
         .layout_tests(false)
         .generate()
         .expect("failed to generate macOS socket bindings");
