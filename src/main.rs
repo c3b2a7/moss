@@ -220,7 +220,7 @@ fn socket_query(cli: &Cli, family: Option<AddressFamily>) -> SocketQuery {
 fn query_includes_protocol(cli: &Cli, protocol: Protocol) -> bool {
     let no_protocol_filter = !cli.tcp && !cli.udp && !cli.unix;
     if no_protocol_filter {
-        return cli.summary || matches!(protocol, Protocol::Tcp | Protocol::Udp);
+        return matches!(protocol, Protocol::Tcp | Protocol::Udp);
     }
 
     match protocol {
@@ -272,13 +272,13 @@ mod tests {
     }
 
     #[test]
-    fn summary_cli_queries_tcp_udp_and_unix_sockets() {
+    fn summary_cli_queries_tcp_and_udp_only_by_default() {
         let cli = Cli::parse_from(["moss", "-s"]);
         let query = socket_query(&cli, family(&cli));
 
         assert!(query.include_tcp);
         assert!(query.include_udp);
-        assert!(query.include_unix);
+        assert!(!query.include_unix);
     }
 
     #[test]

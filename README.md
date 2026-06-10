@@ -59,7 +59,7 @@ moss -t -l # listening TCP sockets
 moss -t -a # all TCP sockets
 moss -4 # IPv4 sockets
 moss -6 # IPv6 sockets
-moss -s # socket summary for TCP, UDP, and Unix sockets
+moss -s # socket summary for TCP and UDP sockets
 ```
 
 Show process, extended, or memory details:
