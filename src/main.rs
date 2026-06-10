@@ -90,7 +90,7 @@ struct Cli {
     #[arg(short = 'm', long)]
     memory: bool,
 
-    /// Show socket usage summary.
+    /// Summarize selected sockets after filters.
     #[arg(short = 's', long)]
     summary: bool,
 
@@ -212,8 +212,7 @@ fn socket_query(cli: &Cli, family: Option<AddressFamily>) -> SocketQuery {
         include_tcp: query_includes_protocol(cli, Protocol::Tcp),
         include_udp: query_includes_protocol(cli, Protocol::Udp),
         include_unix: !matches!(family, Some(AddressFamily::Ipv4 | AddressFamily::Ipv6))
-            && (cli.summary
-                || query_includes_protocol(cli, Protocol::UnixStream)
+            && (query_includes_protocol(cli, Protocol::UnixStream)
                 || query_includes_protocol(cli, Protocol::UnixDatagram)),
     }
 }
@@ -273,13 +272,23 @@ mod tests {
     }
 
     #[test]
-    fn summary_cli_queries_tcp_udp_and_unix_sockets() {
+    fn summary_cli_queries_tcp_and_udp_only_by_default() {
         let cli = Cli::parse_from(["moss", "-s"]);
         let query = socket_query(&cli, family(&cli));
 
         assert!(query.include_tcp);
         assert!(query.include_udp);
-        assert!(query.include_unix);
+        assert!(!query.include_unix);
+    }
+
+    #[test]
+    fn summary_with_protocol_filter_queries_only_selected_protocol() {
+        let cli = Cli::parse_from(["moss", "-s", "-t"]);
+        let query = socket_query(&cli, family(&cli));
+
+        assert!(query.include_tcp);
+        assert!(!query.include_udp);
+        assert!(!query.include_unix);
     }
 
     #[test]
