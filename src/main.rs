@@ -47,7 +47,7 @@ struct Cli {
     udp: bool,
 
     /// Show Unix domain sockets.
-    #[arg(short = 'x', long)]
+    #[arg(short = 'x', long, conflicts_with_all = ["ipv4", "ipv6"])]
     unix: bool,
 
     /// Show listening sockets.
@@ -326,6 +326,21 @@ mod tests {
         let cli = Cli::parse_from(["moss", "-x"]);
 
         assert_eq!(family(&cli), Some(AddressFamily::Unix));
+    }
+
+    #[test]
+    fn ip_family_flags_select_ip_family_filters() {
+        let cli = Cli::parse_from(["moss", "-4"]);
+        assert_eq!(family(&cli), Some(AddressFamily::Ipv4));
+
+        let cli = Cli::parse_from(["moss", "-6"]);
+        assert_eq!(family(&cli), Some(AddressFamily::Ipv6));
+    }
+
+    #[test]
+    fn unix_flag_conflicts_with_ip_family_flags() {
+        assert!(Cli::try_parse_from(["moss", "-x", "-4"]).is_err());
+        assert!(Cli::try_parse_from(["moss", "-x", "-6"]).is_err());
     }
 
     #[test]
