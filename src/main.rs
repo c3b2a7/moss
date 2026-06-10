@@ -48,7 +48,7 @@ struct Cli {
     udp: bool,
 
     /// Show Unix domain sockets.
-    #[arg(short = 'x', long)]
+    #[arg(short = 'x', long, conflicts_with_all = ["ipv4", "ipv6"])]
     unix: bool,
 
     /// Show raw sockets.
@@ -241,15 +241,17 @@ fn query_includes_protocol(cli: &Cli, protocol: Protocol) -> bool {
 }
 
 fn family(cli: &Cli) -> Option<AddressFamily> {
+    match (cli.ipv4, cli.ipv6) {
+        (true, false) => return Some(AddressFamily::Ipv4),
+        (false, true) => return Some(AddressFamily::Ipv6),
+        _ => {}
+    }
+
     if cli.unix && !cli.tcp && !cli.udp && !cli.raw {
         return Some(AddressFamily::Unix);
     }
 
-    match (cli.ipv4, cli.ipv6) {
-        (true, false) => Some(AddressFamily::Ipv4),
-        (false, true) => Some(AddressFamily::Ipv6),
-        _ => None,
-    }
+    None
 }
 
 impl From<&Cli> for OutputOptions {
@@ -267,9 +269,9 @@ impl From<&Cli> for OutputOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, family, socket_query};
+    use super::{Cli, family, protocols, socket_query};
     use clap::Parser;
-    use moss_core::AddressFamily;
+    use moss_core::{AddressFamily, Protocol};
 
     #[test]
     fn default_cli_queries_tcp_and_udp_only() {
@@ -355,10 +357,62 @@ mod tests {
     }
 
     #[test]
+    fn unix_flag_conflicts_with_ip_family_flags() {
+        assert!(Cli::try_parse_from(["moss", "-x", "-4"]).is_err());
+        assert!(Cli::try_parse_from(["moss", "-x", "-6"]).is_err());
+    }
+
+    #[test]
     fn raw_flag_prevents_unix_family_filter() {
         let cli = Cli::parse_from(["moss", "-x", "-w"]);
 
         assert_eq!(family(&cli), None);
+    }
+
+    #[test]
+    fn tcp_udp_flags_query_tcp_and_udp_only() {
+        let cli = Cli::parse_from(["moss", "-t", "-u"]);
+        let query = socket_query(&cli, family(&cli));
+
+        assert!(query.include_tcp);
+        assert!(query.include_udp);
+        assert!(!query.include_raw);
+        assert!(!query.include_unix);
+    }
+
+    #[test]
+    fn raw_unix_flags_query_raw_and_unix_only() {
+        let cli = Cli::parse_from(["moss", "-w", "-x"]);
+        let query = socket_query(&cli, family(&cli));
+
+        assert!(!query.include_tcp);
+        assert!(!query.include_udp);
+        assert!(query.include_raw);
+        assert!(query.include_unix);
+    }
+
+    #[test]
+    fn protocol_filter_is_empty_by_default() {
+        let cli = Cli::parse_from(["moss"]);
+
+        assert!(protocols(&cli).is_empty());
+    }
+
+    #[test]
+    fn unix_protocol_filter_includes_stream_and_datagram() {
+        let cli = Cli::parse_from(["moss", "-x"]);
+
+        assert_eq!(
+            protocols(&cli),
+            vec![Protocol::UnixStream, Protocol::UnixDatagram]
+        );
+    }
+
+    #[test]
+    fn raw_protocol_filter_includes_raw_only() {
+        let cli = Cli::parse_from(["moss", "-w"]);
+
+        assert_eq!(protocols(&cli), vec![Protocol::Raw]);
     }
 
     #[test]
