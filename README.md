@@ -15,8 +15,8 @@ It reads socket data through XNU `sysctl` and process metadata through
 - Service-name lookup by default, numeric ports with `-n`, and reverse hostname
   lookup with `-r`.
 - Resolver caching for host lookups, with `--no-resolver-cache` to disable it.
-- Summary output for a quick count of TCP, UDP, Unix, established, and listening
-  sockets.
+- Summary output for sockets selected by the current protocol, family, state,
+  and expression filters.
 - `ss`-style filter expressions for state, ports, addresses, CIDR ranges, Unix
   paths, boolean logic, and grouping.
 - Support JSON output with `-j`, pretty-printed with `--pretty`.
@@ -59,7 +59,7 @@ moss -t -l # listening TCP sockets
 moss -t -a # all TCP sockets
 moss -4 # IPv4 sockets
 moss -6 # IPv6 sockets
-moss -s # socket summary
+moss -s # socket summary for TCP, UDP, and Unix sockets
 ```
 
 Show process, extended, or memory details:
