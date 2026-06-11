@@ -1,5 +1,6 @@
 use moss_core::{Protocol, Resolver, ResolverConfig, SocketAddress, SocketInfo, TcpState};
 use owo_colors::OwoColorize;
+use std::io::{self, Write};
 use std::net::IpAddr;
 
 pub struct OutputOptions {
@@ -11,7 +12,8 @@ pub struct OutputOptions {
     pub memory: bool,
 }
 
-pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) {
+pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) -> io::Result<()> {
+    let mut out = io::stdout().lock();
     let mut formatter = AddressFormatter::new(options);
     let rows: Vec<SocketRow> = sockets
         .iter()
@@ -27,20 +29,22 @@ pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) {
         .collect();
 
     let widths = SocketWidths::new(&rows);
-    println!("{}", widths.header(options.show_processes));
+    writeln!(out, "{}", widths.header(options.show_processes))?;
 
     for (socket, row) in sockets.iter().zip(rows.iter()) {
-        println!("{}", widths.row(row));
+        writeln!(out, "{}", widths.row(row))?;
 
         if options.extended {
-            println!(
+            writeln!(
+                out,
                 "       uid:{} sk:{:#x} pcb:{:#x}",
                 socket.uid, socket.socket_handle, socket.pcb_handle
-            );
+            )?;
         }
         if options.memory {
             let mem = socket.memory;
-            println!(
+            writeln!(
+                out,
                 "       skmem:(r{},rb{},rm{},rmb{},t{},tb{},tm{},tmb{})",
                 mem.recv_bytes,
                 mem.recv_high_water,
@@ -50,35 +54,40 @@ pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) {
                 mem.send_high_water,
                 mem.send_mbuf_bytes,
                 mem.send_mbuf_limit
-            );
+            )?;
         }
     }
+
+    Ok(())
 }
 
-pub fn print_summary(sockets: &[SocketInfo]) {
+pub fn print_summary(sockets: &[SocketInfo]) -> io::Result<()> {
+    let mut out = io::stdout().lock();
     let summary = SocketSummary::from_sockets(sockets);
 
-    println!("Total: {}", sockets.len());
-    println!(
+    writeln!(out, "Total: {}", sockets.len())?;
+    writeln!(
+        out,
         "TCP:   {} (established {}, listening {})",
         summary.tcp, summary.established, summary.listening
-    );
-    println!("UDP:   {}", summary.udp);
-    println!("RAW:   {}", summary.raw);
-    println!("UNIX:  {}", summary.unix);
+    )?;
+    writeln!(out, "UDP:   {}", summary.udp)?;
+    writeln!(out, "RAW:   {}", summary.raw)?;
+    writeln!(out, "UNIX:  {}", summary.unix)?;
+
+    Ok(())
 }
 
-pub fn print_json(sockets: &[SocketInfo], pretty: bool) {
+pub fn print_json(sockets: &[SocketInfo], pretty: bool) -> io::Result<()> {
+    let mut out = io::stdout().lock();
     let result = if pretty {
         serde_json::to_string_pretty(sockets)
     } else {
         serde_json::to_string(sockets)
     };
 
-    match result {
-        Ok(json) => println!("{json}"),
-        Err(err) => eprintln!("moss: {err}"),
-    }
+    let json = result.map_err(io::Error::other)?;
+    writeln!(out, "{json}")
 }
 
 struct SocketRow {

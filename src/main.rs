@@ -6,6 +6,7 @@ use moss_core::{
     AddressFamily, FilterExpression, Protocol, SocketFilter, SocketQuery, filter_sockets,
     list_sockets,
 };
+use std::io;
 use std::process::ExitCode;
 
 const VERSION: &str = concat!(
@@ -180,21 +181,31 @@ fn main() -> ExitCode {
     match list_sockets(query) {
         Ok(sockets) => {
             let sockets = filter_sockets(sockets, &filter);
-            if cli.summary {
-                print_summary(&sockets);
+            let result = if cli.summary {
+                print_summary(&sockets)
             } else if cli.json {
-                print_json(&sockets, cli.pretty);
+                print_json(&sockets, cli.pretty)
             } else {
                 let options = OutputOptions::from(&cli);
-                print_sockets(&sockets, &options);
-            }
-            ExitCode::SUCCESS
+                print_sockets(&sockets, &options)
+            };
+            exit_code_from_output(result)
         }
-        Err(err) => {
-            eprintln!("moss: {err}");
-            ExitCode::FAILURE
-        }
+        Err(err) => exit_code_from_error(err),
     }
+}
+
+fn exit_code_from_output(result: io::Result<()>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(err) => exit_code_from_error(err),
+    }
+}
+
+fn exit_code_from_error(err: impl std::fmt::Display) -> ExitCode {
+    eprintln!("moss: {err}");
+    ExitCode::FAILURE
 }
 
 fn protocols(cli: &Cli) -> Vec<Protocol> {
@@ -267,9 +278,7 @@ impl From<&Cli> for OutputOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, family, socket_query};
-    use clap::Parser;
-    use moss_core::AddressFamily;
+    use super::*;
 
     #[test]
     fn default_cli_queries_tcp_and_udp_only() {
@@ -385,5 +394,12 @@ mod tests {
         assert!(query.include_udp);
         assert!(!query.include_raw);
         assert!(!query.include_unix);
+    }
+
+    #[test]
+    fn broken_pipe_output_exits_successfully() {
+        let err = io::Error::new(io::ErrorKind::BrokenPipe, "closed pipe");
+
+        assert_eq!(exit_code_from_output(Err(err)), ExitCode::SUCCESS);
     }
 }
