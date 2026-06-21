@@ -46,6 +46,8 @@ pub enum AddressFamily {
     Ipv4,
     /// IPv6 socket.
     Ipv6,
+    /// Dual-stack IPv4/IPv6 socket.
+    Ipv46,
     /// Unix-domain socket.
     Unix,
 }

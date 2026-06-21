@@ -208,10 +208,15 @@ fn state_text(socket: &SocketInfo) -> String {
 }
 
 fn netid_text(socket: &SocketInfo) -> String {
-    match (socket.protocol, socket.family) {
-        (Protocol::Raw, moss_core::AddressFamily::Ipv6) => "raw6".to_string(),
-        _ => socket.protocol.to_string(),
+    if socket.protocol.is_unix() {
+        return socket.protocol.to_string();
     }
+    let suffix = match socket.family {
+        moss_core::AddressFamily::Ipv6 => "6",
+        moss_core::AddressFamily::Ipv46 => "46",
+        _ => "",
+    };
+    format!("{}{}", socket.protocol, suffix)
 }
 
 fn color_state(state: &str) -> String {
@@ -347,10 +352,30 @@ mod tests {
     }
 
     #[test]
-    fn raw_ipv6_keeps_raw6_netid() {
+    fn netid_includes_ip_family_suffix() {
         assert_eq!(
-            netid_text(&socket(Protocol::Raw, AddressFamily::Ipv6)),
-            "raw6"
+            netid_text(&socket(Protocol::Tcp, AddressFamily::Ipv4)),
+            "tcp"
+        );
+        assert_eq!(
+            netid_text(&socket(Protocol::Tcp, AddressFamily::Ipv6)),
+            "tcp6"
+        );
+        assert_eq!(
+            netid_text(&socket(Protocol::Tcp, AddressFamily::Ipv46)),
+            "tcp46"
+        );
+        assert_eq!(
+            netid_text(&socket(Protocol::Udp, AddressFamily::Ipv46)),
+            "udp46"
+        );
+        assert_eq!(
+            netid_text(&socket(Protocol::Raw, AddressFamily::Ipv46)),
+            "raw46"
+        );
+        assert_eq!(
+            netid_text(&socket(Protocol::UnixStream, AddressFamily::Unix)),
+            "u_str"
         );
     }
 
@@ -373,7 +398,7 @@ mod tests {
                 address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: 0,
             }),
-            AddressFamily::Ipv6 => SocketAddress::Inet(Endpoint {
+            AddressFamily::Ipv6 | AddressFamily::Ipv46 => SocketAddress::Inet(Endpoint {
                 address: IpAddr::V6(Ipv6Addr::LOCALHOST),
                 port: 0,
             }),
