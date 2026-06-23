@@ -339,11 +339,11 @@ fn endpoint(pcb: &ffi::xinpcb64, family: AddressFamily, local: bool) -> Endpoint
             let raw = unsafe { pcb.inp_dependfaddr.inp46_foreign.ia46_addr4.s_addr };
             IpAddr::V4(Ipv4Addr::from(raw.to_ne_bytes()))
         }
-        (AddressFamily::Ipv6, true) => {
+        (AddressFamily::Ipv6 | AddressFamily::Ipv46, true) => {
             let raw = unsafe { pcb.inp_dependladdr.inp6_local.__u6_addr.__u6_addr8 };
             IpAddr::V6(Ipv6Addr::from(raw))
         }
-        (AddressFamily::Ipv6, false) => {
+        (AddressFamily::Ipv6 | AddressFamily::Ipv46, false) => {
             let raw = unsafe { pcb.inp_dependfaddr.inp6_foreign.__u6_addr.__u6_addr8 };
             IpAddr::V6(Ipv6Addr::from(raw))
         }
@@ -354,12 +354,14 @@ fn endpoint(pcb: &ffi::xinpcb64, family: AddressFamily, local: bool) -> Endpoint
 }
 
 fn family_from_flags(flags: u8) -> Option<AddressFamily> {
-    if flags & ffi::INP_IPV4 as u8 != 0 {
-        Some(AddressFamily::Ipv4)
-    } else if flags & ffi::INP_IPV6 as u8 != 0 {
-        Some(AddressFamily::Ipv6)
-    } else {
-        None
+    let v4 = flags & ffi::INP_IPV4 as u8 != 0;
+    let v6 = flags & ffi::INP_IPV6 as u8 != 0;
+
+    match (v4, v6) {
+        (true, false) => Some(AddressFamily::Ipv4),
+        (false, true) => Some(AddressFamily::Ipv6),
+        (true, true) => Some(AddressFamily::Ipv46),
+        _ => None,
     }
 }
 

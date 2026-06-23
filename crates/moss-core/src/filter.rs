@@ -98,10 +98,13 @@ impl SocketFilter {
             return false;
         }
 
-        if let Some(family) = self.family
-            && socket.family != family
-        {
-            return false;
+        if let Some(family) = self.family {
+            let family_matches = socket.family == family
+                || (socket.family == AddressFamily::Ipv46
+                    && matches!(family, AddressFamily::Ipv4 | AddressFamily::Ipv6));
+            if !family_matches {
+                return false;
+            }
         }
 
         if !self.all && self.listening && !self.matches_state(socket) {
@@ -971,6 +974,29 @@ mod tests {
             50_000,
             443
         )));
+    }
+
+    #[test]
+    fn ip_family_filters_match_dual_stack_but_unix_does_not() {
+        let mut dual_stack = socket(Protocol::Tcp, Some(TcpState::Listen), 80, 0);
+        dual_stack.family = AddressFamily::Ipv46;
+
+        let ipv4_filter = SocketFilter {
+            family: Some(AddressFamily::Ipv4),
+            ..SocketFilter::default()
+        };
+        let ipv6_filter = SocketFilter {
+            family: Some(AddressFamily::Ipv6),
+            ..SocketFilter::default()
+        };
+        let unix_filter = SocketFilter {
+            family: Some(AddressFamily::Unix),
+            ..SocketFilter::default()
+        };
+
+        assert!(ipv4_filter.matches(&dual_stack));
+        assert!(ipv6_filter.matches(&dual_stack));
+        assert!(!unix_filter.matches(&dual_stack));
     }
 
     #[test]
