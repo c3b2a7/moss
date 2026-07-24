@@ -108,7 +108,7 @@ impl SocketFilter {
         }
 
         if !self.all && self.listening {
-            return socket.state.is_listening()
+            return socket.state.is_listening();
         }
 
         if let Some(expression) = &self.expression
@@ -978,12 +978,7 @@ mod tests {
             22,
             0
         )));
-        assert!(filter.matches(&socket(
-            Protocol::Udp,
-            SocketState::Listen,
-            53,
-            0
-        )));
+        assert!(filter.matches(&socket(Protocol::Udp, SocketState::Listen, 53, 0)));
     }
 
     #[test]

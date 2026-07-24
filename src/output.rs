@@ -306,7 +306,7 @@ impl<'a> AddressFormatter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{netid_text, AddressFormatter, OutputOptions};
+    use super::{AddressFormatter, OutputOptions, netid_text};
     use moss_core::{
         AddressFamily, Endpoint, Protocol, SocketAddress, SocketInfo, SocketMemory, SocketState,
         TcpState,
