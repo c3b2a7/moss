@@ -1,6 +1,6 @@
 use crate::model::{
     AddressFamily, Endpoint, ProcessInfo, Protocol, SocketAddress, SocketInfo, SocketMemory,
-    TcpState,
+    SocketState, TcpState,
 };
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -164,74 +164,6 @@ fn list_raw(processes: &ProcessIndex) -> Result<Vec<SocketInfo>, Error> {
     Ok(sockets)
 }
 
-fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
-    let pcb = raw.xt_inpcb;
-    let family = family_from_flags(pcb.inp_vflag)?;
-    let local = endpoint(&pcb, family, true);
-    let peer = endpoint(&pcb, family, false);
-    let socket = pcb.xi_socket;
-
-    Some(SocketInfo {
-        protocol: Protocol::Tcp,
-        ip_protocol: None,
-        family,
-        state: Some(TcpState::from(raw.t_state)),
-        recv_queue: socket.so_rcv.sb_cc,
-        send_queue: socket.so_snd.sb_cc,
-        local: SocketAddress::Inet(local),
-        peer: SocketAddress::Inet(peer),
-        uid: socket.so_uid,
-        socket_handle: socket.xso_so,
-        pcb_handle: socket.so_pcb,
-        memory: memory_from_xsocket(socket),
-        process: lookup_process(processes, socket.xso_so, socket.so_pcb),
-    })
-}
-
-fn udp_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
-    let family = family_from_flags(pcb.inp_vflag)?;
-    let socket = pcb.xi_socket;
-
-    Some(SocketInfo {
-        protocol: Protocol::Udp,
-        ip_protocol: None,
-        family,
-        state: None,
-        recv_queue: socket.so_rcv.sb_cc,
-        send_queue: socket.so_snd.sb_cc,
-        local: SocketAddress::Inet(endpoint(&pcb, family, true)),
-        peer: SocketAddress::Inet(endpoint(&pcb, family, false)),
-        uid: socket.so_uid,
-        socket_handle: socket.xso_so,
-        pcb_handle: socket.so_pcb,
-        memory: memory_from_xsocket(socket),
-        process: lookup_process(processes, socket.xso_so, socket.so_pcb),
-    })
-}
-
-fn raw_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
-    let family = family_from_flags(pcb.inp_vflag)?;
-    let socket = pcb.xi_socket;
-    let local = endpoint(&pcb, family, true);
-    let peer = endpoint(&pcb, family, false);
-
-    Some(SocketInfo {
-        protocol: Protocol::Raw,
-        ip_protocol: Some(pcb.inp_ip_p),
-        family,
-        state: None,
-        recv_queue: socket.so_rcv.sb_cc,
-        send_queue: socket.so_snd.sb_cc,
-        local: SocketAddress::Inet(local),
-        peer: SocketAddress::Inet(peer),
-        uid: socket.so_uid,
-        socket_handle: socket.xso_so,
-        pcb_handle: socket.so_pcb,
-        memory: memory_from_xsocket(socket),
-        process: lookup_process(processes, socket.xso_so, socket.so_pcb),
-    })
-}
-
 fn list_unix(processes: &ProcessIndex) -> Result<Vec<SocketInfo>, Error> {
     let mut sockets = Vec::new();
     sockets.extend(list_unix_protocol(
@@ -271,24 +203,91 @@ fn list_unix_protocol(
     Ok(sockets)
 }
 
+fn tcp_socket(raw: ffi::xtcpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
+    let pcb = raw.xt_inpcb;
+    let family = family_from_flags(pcb.inp_vflag)?;
+    let local = endpoint(&pcb, family, true);
+    let peer = endpoint(&pcb, family, false);
+    let socket = pcb.xi_socket;
+
+    Some(SocketInfo {
+        protocol: Protocol::Tcp,
+        ip_protocol: None,
+        family,
+        state: SocketState::Tcp(TcpState::from(raw.t_state)),
+        recv_queue: socket.so_rcv.sb_cc,
+        send_queue: socket.so_snd.sb_cc,
+        local: SocketAddress::Inet(local),
+        peer: SocketAddress::Inet(peer),
+        uid: socket.so_uid,
+        socket_handle: socket.xso_so,
+        pcb_handle: socket.so_pcb,
+        memory: memory_from_xsocket(socket),
+        process: lookup_process(processes, socket.xso_so, socket.so_pcb),
+    })
+}
+
+fn udp_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
+    let family = family_from_flags(pcb.inp_vflag)?;
+    let socket = pcb.xi_socket;
+    let local = endpoint(&pcb, family, true);
+    let peer = endpoint(&pcb, family, false);
+
+    Some(SocketInfo {
+        protocol: Protocol::Udp,
+        ip_protocol: None,
+        family,
+        state: connect_state(socket.so_state),
+        recv_queue: socket.so_rcv.sb_cc,
+        send_queue: socket.so_snd.sb_cc,
+        local: SocketAddress::Inet(local),
+        peer: SocketAddress::Inet(peer),
+        uid: socket.so_uid,
+        socket_handle: socket.xso_so,
+        pcb_handle: socket.so_pcb,
+        memory: memory_from_xsocket(socket),
+        process: lookup_process(processes, socket.xso_so, socket.so_pcb),
+    })
+}
+
+fn raw_socket(pcb: ffi::xinpcb64, processes: &ProcessIndex) -> Option<SocketInfo> {
+    let family = family_from_flags(pcb.inp_vflag)?;
+    let socket = pcb.xi_socket;
+    let local = endpoint(&pcb, family, true);
+    let peer = endpoint(&pcb, family, false);
+
+    Some(SocketInfo {
+        protocol: Protocol::Raw,
+        ip_protocol: Some(pcb.inp_ip_p),
+        family,
+        state: connect_state(socket.so_state),
+        recv_queue: socket.so_rcv.sb_cc,
+        send_queue: socket.so_snd.sb_cc,
+        local: SocketAddress::Inet(local),
+        peer: SocketAddress::Inet(peer),
+        uid: socket.so_uid,
+        socket_handle: socket.xso_so,
+        pcb_handle: socket.so_pcb,
+        memory: memory_from_xsocket(socket),
+        process: lookup_process(processes, socket.xso_so, socket.so_pcb),
+    })
+}
+
 fn unix_socket(
     pcb: ffi::moss_xunpcb64,
     protocol: Protocol,
     processes: &ProcessIndex,
 ) -> SocketInfo {
     let socket = pcb.xu_socket;
+    let state = unix_state(protocol, socket.so_options, socket.so_state);
     let local = unix_path(unsafe { pcb.xu_au.xuu_addr });
-    let peer = if socket.so_state as u32 & ffi::SOI_S_ISCONNECTED != 0 {
-        unix_path(unsafe { pcb.xu_cau.xuu_caddr })
-    } else {
-        "*".to_string()
-    };
+    let peer = unix_path(unsafe { pcb.xu_cau.xuu_caddr });
 
     SocketInfo {
         protocol,
         ip_protocol: None,
         family: AddressFamily::Unix,
-        state: None,
+        state,
         recv_queue: socket.so_rcv.sb_cc,
         send_queue: socket.so_snd.sb_cc,
         local: SocketAddress::Unix { path: local },
@@ -312,6 +311,24 @@ fn unix_path(addr: ffi::sockaddr_un) -> String {
     }
     let bytes: Vec<u8> = addr.sun_path[..len].iter().map(|ch| *ch as u8).collect();
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn connect_state(state: i16) -> SocketState {
+    if state as u32 & ffi::SOI_S_ISCONNECTED != 0 {
+        SocketState::Connected
+    } else {
+        SocketState::Unconnected
+    }
+}
+
+fn unix_state(protocol: Protocol, options: i16, state: i16) -> SocketState {
+    if protocol == Protocol::UnixStream && options as i32 & libc::SO_ACCEPTCONN != 0 {
+        SocketState::Listen
+    } else if state as u32 & ffi::SOI_S_ISCONNECTED != 0 {
+        SocketState::Connected
+    } else {
+        SocketState::Unconnected
+    }
 }
 
 fn memory_from_xsocket(socket: ffi::xsocket64) -> SocketMemory {
@@ -522,4 +539,35 @@ fn read_unaligned<T: Copy>(buf: &[u8]) -> T {
 
 fn zeroed<T>() -> T {
     unsafe { MaybeUninit::<T>::zeroed().assume_init() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{connect_state, unix_state};
+    use crate::model::{Protocol, SocketState};
+
+    #[test]
+    fn connection_state_uses_kernel_connected_flag() {
+        assert_eq!(connect_state(0), SocketState::Unconnected);
+        assert_eq!(
+            connect_state(moss_sys::SOI_S_ISCONNECTED as i16),
+            SocketState::Connected
+        );
+    }
+
+    #[test]
+    fn unix_stream_accepting_connections_is_listening() {
+        assert_eq!(
+            unix_state(Protocol::UnixStream, libc::SO_ACCEPTCONN as i16, 0),
+            SocketState::Listen
+        );
+        assert_eq!(
+            unix_state(Protocol::UnixDatagram, libc::SO_ACCEPTCONN as i16, 0),
+            SocketState::Unconnected
+        );
+        assert_eq!(
+            unix_state(Protocol::UnixStream, 0, moss_sys::SOI_S_ISCONNECTED as i16,),
+            SocketState::Connected
+        );
+    }
 }

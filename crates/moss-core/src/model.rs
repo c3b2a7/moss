@@ -265,6 +265,49 @@ impl fmt::Display for TcpState {
     }
 }
 
+/// Socket state across supported protocols.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "tcp_state", rename_all = "kebab-case")]
+pub enum SocketState {
+    /// TCP socket state.
+    Tcp(TcpState),
+    /// Listening socket state for non-TCP protocols.
+    Listen,
+    /// Connected socket state for non-TCP protocols.
+    Connected,
+    /// Unconnected socket state for non-TCP protocols.
+    Unconnected,
+    /// State could not be derived.
+    Unknown,
+}
+
+impl SocketState {
+    /// Returns the underlying TCP state when available.
+    pub fn tcp_state(self) -> Option<TcpState> {
+        match self {
+            Self::Tcp(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// Returns true for listening sockets.
+    pub fn is_listening(self) -> bool {
+        matches!(self, Self::Tcp(state) if state.is_listening()) || matches!(self, Self::Listen)
+    }
+}
+
+impl fmt::Display for SocketState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tcp(state) => state.fmt(f),
+            Self::Listen => f.write_str("LISTEN"),
+            Self::Connected => f.write_str("CONNECTED"),
+            Self::Unconnected => f.write_str("UNCONN"),
+            Self::Unknown => f.write_str("UNKNOWN"),
+        }
+    }
+}
+
 /// Process metadata associated with a socket, when available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProcessInfo {
@@ -312,8 +355,8 @@ pub struct SocketInfo {
     pub ip_protocol: Option<u8>,
     /// Socket address family.
     pub family: AddressFamily,
-    /// TCP state, or `None` for UDP and Unix-domain sockets.
-    pub state: Option<TcpState>,
+    /// Protocol-specific socket state.
+    pub state: SocketState,
     /// Receive queue byte count.
     pub recv_queue: u32,
     /// Send queue byte count.
@@ -332,4 +375,34 @@ pub struct SocketInfo {
     pub memory: SocketMemory,
     /// Process metadata when requested and available.
     pub process: Option<ProcessInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SocketState, TcpState};
+    use serde_json::json;
+
+    #[test]
+    fn serializes_socket_states_with_explicit_kinds() {
+        assert_eq!(
+            serde_json::to_value(SocketState::Tcp(TcpState::Established)).unwrap(),
+            json!({"kind": "tcp", "tcp_state": "established"})
+        );
+        assert_eq!(
+            serde_json::to_value(SocketState::Listen).unwrap(),
+            json!({"kind": "listen"})
+        );
+        assert_eq!(
+            serde_json::to_value(SocketState::Connected).unwrap(),
+            json!({"kind": "connected"})
+        );
+        assert_eq!(
+            serde_json::to_value(SocketState::Unconnected).unwrap(),
+            json!({"kind": "unconnected"})
+        );
+        assert_eq!(
+            serde_json::to_value(SocketState::Unknown).unwrap(),
+            json!({"kind": "unknown"})
+        );
+    }
 }
