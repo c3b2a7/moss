@@ -1,5 +1,8 @@
 mod output;
 
+#[cfg(not(target_os = "macos"))]
+compile_error!("moss only supports macOS targets");
+
 use crate::output::{OutputOptions, print_json, print_sockets, print_summary};
 use clap::Parser;
 use moss_core::{
