@@ -2,7 +2,7 @@
 members = [".", "crates/moss-core", "crates/moss-sys"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/c3b2a7/moss"
@@ -26,7 +26,7 @@ categories = ["command-line-utilities", "network-programming", "os::macos-apis"]
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 owo-colors = "4.2"
-moss-core = { version = "0.1.0", path = "crates/moss-core" }
+moss-core = { version = "0.2.0", path = "crates/moss-core" }
 serde_json = "1.0"
 tabled = { version = "0.15", features = ["ansi"] }
 

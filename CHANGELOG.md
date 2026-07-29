@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0](https://github.com/c3b2a7/moss/compare/v0.1.0..v0.2.0) - 2026-07-29
+
+### 🚀 Features
+
+- *(cli)* Add JSON output mode - ([9f74431](https://github.com/c3b2a7/moss/commit/9f74431f61867052cc951bc42f5c32cbb34bf002))
+- Add macOS-only constraints and crate metadata ([#11](https://github.com/c3b2a7/moss/pull/11)) - ([a646a38](https://github.com/c3b2a7/moss/commit/a646a38ece2c49b2086c004c0abd135d9982c630))
+- Add IPv6/IPv46 netid output ([#9](https://github.com/c3b2a7/moss/pull/9)) - ([810b0ae](https://github.com/c3b2a7/moss/commit/810b0ae1b1f0b46476c88ea77183c4fbc8698d56))
+- Add raw socket support ([#2](https://github.com/c3b2a7/moss/pull/2)) - ([03baa63](https://github.com/c3b2a7/moss/commit/03baa6356d805d0268c26cf1b47bcab2456d3615))
+- Expose filter builder APIs and add comments - ([df222d2](https://github.com/c3b2a7/moss/commit/df222d29f78da0ca1d42df058caf19a6d6fe099e))
+
+### 🐛 Bug Fixes
+
+- *(cli)* Reject unix and IP family flags together ([#6](https://github.com/c3b2a7/moss/pull/6)) - ([6f98ff6](https://github.com/c3b2a7/moss/commit/6f98ff6bd6b464df3604c36af626b468dab088ce))
+- Handle broken pipe output ([#7](https://github.com/c3b2a7/moss/pull/7)) - ([3a41b1e](https://github.com/c3b2a7/moss/commit/3a41b1e032d627e88344eae834ac697683051108))
+- Clarify summary socket selection ([#4](https://github.com/c3b2a7/moss/pull/4)) - ([a56b987](https://github.com/c3b2a7/moss/commit/a56b9876f81a8e657adfaf7d30d0b6d514d99674))
+
+### 🛠️ Refactor
+
+- *(model)* Replace Option<TcpState> with SocketState enum for all support protocols ([#10](https://github.com/c3b2a7/moss/pull/10)) - ([1e961cb](https://github.com/c3b2a7/moss/commit/1e961cbb401eb8ae23f0fb94e10a668afb6965b9))
+- *(output)* Use tabled for socket formatting ([#12](https://github.com/c3b2a7/moss/pull/12)) - ([a085db5](https://github.com/c3b2a7/moss/commit/a085db57dc6c48b99bcf8d50a9c8e61a4e8761e8))
+- *(platform)* Use sysctl for unix socket collection ([#1](https://github.com/c3b2a7/moss/pull/1)) - ([0ffa255](https://github.com/c3b2a7/moss/commit/0ffa255dad4cb62e2b7d16081a6a82b8acbc426b))
+
+### 🧪 Testing
+
+- *(cli)* Add protocol selection tests ([#3](https://github.com/c3b2a7/moss/pull/3)) - ([f69c605](https://github.com/c3b2a7/moss/commit/f69c6055695f3a74626a8da4bb9b9d22aa45448c))
+
+### ⚙️ Miscellaneous Tasks
+
+- Rename `moss` crate to `moss-core` - ([4e38d1a](https://github.com/c3b2a7/moss/commit/4e38d1aed70b019e027bb087aa6341e2be44da3e))
+
+
 ## [0.1.0] - 2026-05-29
 
 ### 🚀 Features
