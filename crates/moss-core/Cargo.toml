@@ -22,7 +22,7 @@ path = "src/lib.rs"
 
 [dependencies]
 libc = "0.2"
-moss-sys = { version = "0.1.0", path = "../moss-sys" }
+moss-sys = { version = "0.2.0", path = "../moss-sys" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
 
