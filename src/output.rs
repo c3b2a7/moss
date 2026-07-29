@@ -4,6 +4,8 @@ use moss_core::{
 use owo_colors::OwoColorize;
 use std::io::{self, Write};
 use std::net::IpAddr;
+use tabled::builder::Builder;
+use tabled::settings::Style;
 
 pub struct OutputOptions {
     pub show_processes: bool,
@@ -17,29 +19,42 @@ pub struct OutputOptions {
 pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) -> io::Result<()> {
     let mut out = io::stdout().lock();
     let mut formatter = AddressFormatter::new(options);
-    let rows: Vec<SocketRow> = sockets
-        .iter()
-        .map(|socket| SocketRow {
-            netid: netid_text(socket),
-            state: state_text(socket),
-            recv_queue: socket.recv_queue.to_string(),
-            send_queue: socket.send_queue.to_string(),
-            local: formatter.format(socket, &socket.local, true),
-            peer: formatter.format(socket, &socket.peer, false),
-            process: socket.process.as_ref().map(ToString::to_string),
-        })
-        .collect();
 
-    let widths = SocketWidths::new(&rows);
-    writeln!(out, "{}", widths.header(options.show_processes))?;
+    let mut builder = Builder::new();
+    builder.push_record(header_row(options));
+    let mut row_heights = Vec::with_capacity(sockets.len());
+    for socket in sockets {
+        let row = data_row(socket, options, &mut formatter);
+        row_heights.push(
+            row.iter()
+                .map(|cell| cell.lines().count())
+                .max()
+                .unwrap_or(1),
+        );
+        builder.push_record(row);
+    }
 
-    for (socket, row) in sockets.iter().zip(rows.iter()) {
-        writeln!(out, "{}", widths.row(row))?;
+    let table = builder.build().with(Style::blank()).to_string();
+    if !options.extended && !options.memory {
+        return writeln!(out, "{table}");
+    }
 
+    let mut rows = table.lines();
+    if let Some(header) = rows.next() {
+        writeln!(out, "{header}")?;
+    }
+
+    for (socket, row_height) in sockets.iter().zip(row_heights) {
+        if let Some(row) = rows.next() {
+            writeln!(out, "{row}")?;
+        }
+        for row in rows.by_ref().take(row_height - 1) {
+            writeln!(out, "{row}")?;
+        }
         if options.extended {
             writeln!(
                 out,
-                "       uid:{} sk:{:#x} pcb:{:#x}",
+                " uid:{} sk:{:#x} pcb:{:#x}",
                 socket.uid, socket.socket_handle, socket.pcb_handle
             )?;
         }
@@ -47,7 +62,7 @@ pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) -> io::Res
             let mem = socket.memory;
             writeln!(
                 out,
-                "       skmem:(r{},rb{},rm{},rmb{},t{},tb{},tm{},tmb{})",
+                " skmem:(r{},rb{},rm{},rmb{},t{},tb{},tm{},tmb{})",
                 mem.recv_bytes,
                 mem.recv_high_water,
                 mem.recv_mbuf_bytes,
@@ -61,6 +76,56 @@ pub fn print_sockets(sockets: &[SocketInfo], options: &OutputOptions) -> io::Res
     }
 
     Ok(())
+}
+
+fn header_row(options: &OutputOptions) -> Vec<String> {
+    let mut header = vec![
+        "Netid".bold().to_string(),
+        "State".bold().to_string(),
+        "Recv-Q".bold().to_string(),
+        "Send-Q".bold().to_string(),
+        "LocalAddress:Port".bold().to_string(),
+        "PeerAddress:Port".bold().to_string(),
+    ];
+
+    if options.show_processes {
+        header.push("Process".bold().to_string());
+    }
+
+    header
+}
+
+fn data_row(
+    socket: &SocketInfo,
+    options: &OutputOptions,
+    formatter: &mut AddressFormatter,
+) -> Vec<String> {
+    let mut row = vec![
+        netid_text(socket).cyan().to_string(),
+        color_state(socket.state),
+        socket.recv_queue.to_string(),
+        socket.send_queue.to_string(),
+        formatter
+            .format(socket, &socket.local, true)
+            .yellow()
+            .to_string(),
+        formatter
+            .format(socket, &socket.peer, false)
+            .yellow()
+            .to_string(),
+    ];
+
+    if options.show_processes {
+        row.push(
+            socket
+                .process
+                .as_ref()
+                .map(|p| p.to_string())
+                .unwrap_or_default(),
+        );
+    }
+
+    row
 }
 
 pub fn print_summary(sockets: &[SocketInfo]) -> io::Result<()> {
@@ -90,82 +155,6 @@ pub fn print_json(sockets: &[SocketInfo], pretty: bool) -> io::Result<()> {
 
     let json = result.map_err(io::Error::other)?;
     writeln!(out, "{json}")
-}
-
-struct SocketRow {
-    netid: String,
-    state: String,
-    recv_queue: String,
-    send_queue: String,
-    local: String,
-    peer: String,
-    process: Option<String>,
-}
-
-struct SocketWidths {
-    netid: usize,
-    state: usize,
-    recv_queue: usize,
-    send_queue: usize,
-    local: usize,
-    peer: usize,
-}
-
-impl SocketWidths {
-    fn new(rows: &[SocketRow]) -> Self {
-        let mut widths = Self {
-            netid: "Netid".len(),
-            state: "State".len(),
-            recv_queue: "Recv-Q".len(),
-            send_queue: "Send-Q".len(),
-            local: "Local Address:Port".len(),
-            peer: "Peer Address:Port".len(),
-        };
-
-        for row in rows {
-            widths.netid = widths.netid.max(row.netid.len());
-            widths.state = widths.state.max(row.state.len());
-            widths.recv_queue = widths.recv_queue.max(row.recv_queue.len());
-            widths.send_queue = widths.send_queue.max(row.send_queue.len());
-            widths.local = widths.local.max(row.local.len());
-            widths.peer = widths.peer.max(row.peer.len());
-        }
-
-        widths
-    }
-
-    fn header(&self, show_processes: bool) -> String {
-        let mut line = format!(
-            "{} {} {} {} {} {}",
-            format_args!("{:<width$}", "Netid", width = self.netid).bold(),
-            format_args!("{:<width$}", "State", width = self.state).bold(),
-            format_args!("{:>width$}", "Recv-Q", width = self.recv_queue).bold(),
-            format_args!("{:>width$}", "Send-Q", width = self.send_queue).bold(),
-            format_args!("{:<width$}", "Local Address:Port", width = self.local).bold(),
-            format_args!("{:<width$}", "Peer Address:Port", width = self.peer).bold(),
-        );
-        if show_processes {
-            line.push_str(&" Process".bold().to_string());
-        }
-        line
-    }
-
-    fn row(&self, row: &SocketRow) -> String {
-        let mut line = format!(
-            "{} {} {} {} {} {}",
-            format_args!("{:<width$}", row.netid, width = self.netid).cyan(),
-            color_state_padded(&row.state, self.state),
-            format_args!("{:>width$}", row.recv_queue, width = self.recv_queue),
-            format_args!("{:>width$}", row.send_queue, width = self.send_queue),
-            format_args!("{:<width$}", row.local, width = self.local).yellow(),
-            format_args!("{:<width$}", row.peer, width = self.peer).yellow(),
-        );
-        if let Some(process) = &row.process {
-            line.push(' ');
-            line.push_str(process);
-        }
-        line
-    }
 }
 
 #[derive(Default)]
@@ -202,10 +191,6 @@ impl SocketSummary {
     }
 }
 
-fn state_text(socket: &SocketInfo) -> String {
-    socket.state.to_string()
-}
-
 fn netid_text(socket: &SocketInfo) -> String {
     if socket.protocol.is_unix() {
         return socket.protocol.to_string();
@@ -218,19 +203,36 @@ fn netid_text(socket: &SocketInfo) -> String {
     format!("{}{}", socket.protocol, suffix)
 }
 
-fn color_state(state: &str) -> String {
+fn state_display(state: SocketState) -> &'static str {
     match state {
-        "LISTEN" => state.green().to_string(),
-        "ESTABLISHED" => state.blue().to_string(),
-        "UNCONN" => state.dimmed().to_string(),
-        _ => state.to_string(),
+        SocketState::Listen => "LISTEN",
+        SocketState::Tcp(TcpState::Listen) => "LISTEN",
+        SocketState::Connected => "CONNECTED",
+        SocketState::Tcp(TcpState::Established) => "ESTABLISHED",
+        SocketState::Tcp(TcpState::SynSent) => "SYN-SENT",
+        SocketState::Tcp(TcpState::SynReceived) => "SYN-RECV",
+        SocketState::Tcp(TcpState::CloseWait) => "CLOSE-WAIT",
+        SocketState::Tcp(TcpState::FinWait1) => "FIN-WAIT-1",
+        SocketState::Tcp(TcpState::FinWait2) => "FIN-WAIT-2",
+        SocketState::Tcp(TcpState::Closing) => "CLOSING",
+        SocketState::Tcp(TcpState::LastAck) => "LAST-ACK",
+        SocketState::Tcp(TcpState::TimeWait) => "TIME-WAIT",
+        SocketState::Unconnected => "UNCONN",
+        SocketState::Unknown | SocketState::Tcp(TcpState::Unknown(_)) => "UNKNOWN",
+        SocketState::Tcp(TcpState::Closed) => "CLOSED",
     }
 }
 
-fn color_state_padded(state: &str, width: usize) -> String {
-    let mut text = color_state(state);
-    text.push_str(&" ".repeat(width.saturating_sub(state.len())));
-    text
+fn color_state(state: SocketState) -> String {
+    match state_display(state) {
+        "LISTEN" | "CONNECTED" => state.green().to_string(),
+        "ESTABLISHED" | "SYN-SENT" | "SYN-RECV" => state.blue().to_string(),
+        "UNCONN" => state.dimmed().to_string(),
+        "CLOSE-WAIT" | "FIN-WAIT-1" | "FIN-WAIT-2" | "CLOSING" | "LAST-ACK" | "TIME-WAIT" => {
+            state.red().to_string()
+        }
+        _ => state.to_string(),
+    }
 }
 
 struct AddressFormatter<'a> {
